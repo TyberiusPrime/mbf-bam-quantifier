@@ -1,1 +1,1 @@
-Contig counting does not require gtf, do not set it for this case.
+GTF file is not required for contig quantification, do net set it

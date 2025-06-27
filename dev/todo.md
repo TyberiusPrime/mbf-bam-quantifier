@@ -1,0 +1,5 @@
+- write up test harness
+- implement basic config parsing
+- basic test
+- feature count test 
+- star solo comparison tests

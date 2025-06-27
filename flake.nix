@@ -33,17 +33,17 @@
       bacon = pkgs.bacon;
     in rec {
       # `nix build`
-      packages.mbf-fastq-processor = naersk-lib.buildPackage {
-        pname = "mbf_rust_processor";
+      packages.mbf-bam-quantifier = naersk-lib.buildPackage {
+        pname = "mbf-bam-quantifier";
         root = ./.;
         nativeBuildInputs = with pkgs; [pkg-config];
         buildInputs = with pkgs; [openssl cmake];
         release = true;
         CARGO_PROFILE_RELEASE_debug = "0";
       };
-      packages.mbf-fastq-processor_other_linux =
+      packages.mbf-bam-quantifier_other_linux =
         (naersk-lib.buildPackage {
-          pname = "mbf_rust_processor";
+          pname = "mbf-bam-quantifier";
           root = ./.;
           nativeBuildInputs = with pkgs; [pkg-config];
           buildInputs = with pkgs; [openssl cmake];
@@ -53,7 +53,7 @@
         .overrideAttrs {
           # make it compatible with other linuxes. It's statically linked anyway
           postInstall = ''
-            patchelf $out/bin/mbf_fastq_processor --set-interpreter "/lib64/ld-linux-x86-64.so.2"
+            patchelf $out/bin/mbf-bam-quantifier --set-interpreter "/lib64/ld-linux-x86-64.so.2"
           '';
         };
       packages.check = naersk-lib.buildPackage {
@@ -104,11 +104,11 @@
       # };
       #cargoTestCommands = old: ["cargo llvm-cov --html nextest --verbose $cargo_test_options"];
 
-      defaultPackage = packages.mbf-fastq-processor;
+      defaultPackage = packages.mbf-bam-quantifier;
 
       # `nix run`
-      apps.mbf-fastq-processor = utils.lib.mkApp {drv = packages.my-project;};
-      defaultApp = apps.mbf-fastq-processor;
+      apps.mbf-bam-quantifier = utils.lib.mkApp {drv = packages.my-project;};
+      defaultApp = apps.mbf-bam-quantifier;
 
       # `nix develop`
       devShell = pkgs.mkShell {

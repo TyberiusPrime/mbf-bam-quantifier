@@ -8,5 +8,4 @@
 
 
 [output]
-	filename = 'output.tsv'
-	mode = 'TSV'
+	directory = 'output'
