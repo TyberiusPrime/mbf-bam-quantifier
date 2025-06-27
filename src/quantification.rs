@@ -1,4 +1,5 @@
 mod references;
+mod featurecounts;
 
 use enum_dispatch::enum_dispatch;
 use crate::config::{Input, Output, Config};
@@ -15,6 +16,8 @@ pub trait Quant {
 pub enum Quantification {
     #[serde(alias="references")]
     References(references::Quantification),
+    #[serde(alias="featurecounts")]
+    FeatureCounts(featurecounts::Quantification),
 }
 
  

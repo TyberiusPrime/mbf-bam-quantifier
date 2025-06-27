@@ -36,7 +36,10 @@
       packages.mbf-bam-quantifier = naersk-lib.buildPackage {
         pname = "mbf-bam-quantifier";
         root = ./.;
-        nativeBuildInputs = with pkgs; [pkg-config];
+        nativeBuildInputs = with pkgs; [
+          pkg-config
+          clang
+        ];
         buildInputs = with pkgs; [openssl cmake];
         release = true;
         CARGO_PROFILE_RELEASE_debug = "0";
@@ -45,7 +48,7 @@
         (naersk-lib.buildPackage {
           pname = "mbf-bam-quantifier";
           root = ./.;
-          nativeBuildInputs = with pkgs; [pkg-config];
+          nativeBuildInputs = with pkgs; [pkg-config clang];
           buildInputs = with pkgs; [openssl cmake];
           release = true;
           CARGO_PROFILE_RELEASE_debug = "0";
@@ -66,7 +69,7 @@
         src = ./.;
         buildInputs = with pkgs; [openssl cmake];
         mode = "test";
-        nativeBuildInputs = with pkgs; [pkg-config cargo-nextest];
+        nativeBuildInputs = with pkgs; [pkg-config cargo-nextest clang];
         cargoTestCommands = old: ["cargo nextest run $cargo_test_options --no-fail-fast"];
         override = {
           buildPhase = ":";
@@ -130,7 +133,33 @@
           pkgs.pkg-config
           pkgs.rust-analyzer
           rust
+          pkgs.clang
         ];
+        LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
+      };
+      devShells.edit = pkgs.mkShell {
+        # supply the specific rust version
+        nativeBuildInputs = [
+          bacon
+          pkgs.cargo-audit
+          pkgs.cargo-crev
+          pkgs.cargo-flamegraph
+          pkgs.cargo-insta
+          pkgs.cargo-nextest
+          pkgs.cargo-llvm-cov
+          pkgs.cargo-outdated
+          pkgs.cargo-udeps
+          pkgs.cargo-vet
+          pkgs.cmake
+          pkgs.git
+          pkgs.openssl
+          pkgs.pkg-config
+          pkgs.rust-analyzer
+          rust
+          pkgs.clang
+        ];
+        LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
+        CARGO_TARGET_DIR = "target_editor";
       };
       devShells.doc = pkgs.mkShell {
         nativeBuildInputs = [pkgs.hugo];

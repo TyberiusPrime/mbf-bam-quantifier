@@ -1,7 +1,6 @@
 # a basic reproduction of samtools idxstats
 [input]
 	bam = "input.bam"
-	gtf = "input.gtf.gz"
 
 [quant]
    mode = "featurecounts"

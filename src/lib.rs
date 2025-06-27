@@ -1,8 +1,13 @@
 use std::path::Path;
-
 use anyhow::{Context, Result};
+
 mod config;
+mod bam_ext;
 mod quantification;
+mod categorical;
+mod io;
+mod gtf;
+
 use config::Config;
 use quantification::Quant;
 
