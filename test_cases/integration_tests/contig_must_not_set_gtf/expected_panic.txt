@@ -1,0 +1,1 @@
+Contig counting does not require gtf, do not set it for this case.
