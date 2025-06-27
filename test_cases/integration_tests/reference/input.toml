@@ -1,10 +1,10 @@
 # a basic reproduction of samtools idxstats
 [input]
-	bam = input.bam
+	bam = "input.bam"
 	# gtf = input.gtf
 
-[quantifaction]
-   mode = "contig"
+[quantification]
+   mode = "references"
 
 
 [output]

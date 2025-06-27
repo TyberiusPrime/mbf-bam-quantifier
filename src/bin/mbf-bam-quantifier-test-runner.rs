@@ -9,7 +9,7 @@ use tempfile::TempDir;
 const CLI_UNDER_TEST: &str = "mbf-bam-quantifier";
 
 fn main() -> Result<()> {
-    human_panic::setup_panic!();
+    //human_panic::setup_panic!();
     for test_dir in std::env::args().skip(1).filter(|x| !x.starts_with("--")) {
         run_tests(PathBuf::from(test_dir), false)?
     }
@@ -322,6 +322,51 @@ fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&DirEntry) -> Result<()>) -> Result
     Ok(())
 }
 
+fn scan_dir<F: Fn(&str, &str) -> bool>(dir: &Path, callback: F) -> Result<Vec<(PathBuf, String)>> {
+    let mut files = Vec::new();
+    visit_dirs(dir, &mut |entry: &DirEntry| -> Result<()> {
+        let path = entry.path();
+        let relative_path = path
+            .strip_prefix(dir)
+            .context("Strip prefix from directory path")?
+            .to_string_lossy()
+            .to_string();
+
+        let path = if path.is_symlink() {
+            let res_path = fs::read_link(&path)
+                .with_context(|| format!("Failed to read symlink: {}", path.display()))?;
+            let res_path = if res_path.is_relative() {
+                path.parent()
+                    .context("Get parent directory of symlink")?
+                    .join(res_path)
+                    .canonicalize()
+                    .with_context(|| format!("Failed to follow symlink: {}", path.display()))?
+            } else {
+                res_path
+            };
+            /* println!(
+                "Found symlink: {} -> {}",
+                path.display(),
+                res_path.display()
+            ); */
+            res_path
+        } else {
+            path
+        };
+
+        if path.is_file() {
+            if let Some(file_name) = path.file_name() {
+                let file_name_str = file_name.to_string_lossy();
+                if callback(relative_path.as_ref(), &file_name_str) {
+                    files.push((path, relative_path));
+                }
+            }
+        }
+        Ok(())
+    })?;
+    Ok(files)
+}
+
 fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput> {
     let mut result = TestOutput {
         stdout: String::new(),
@@ -331,35 +376,51 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
         mismatched_files: Vec::new(),
         unexpected_files: Vec::new(),
     };
-
-    let temp_dir = setup_test_environment(&test_case.dir).context("Setup test dir")?;
-
-    // Run the processor
-    let config_file = temp_dir.path().join("input.toml");
-    //chdir to temp_dir
-
     let actual_dir = test_case.dir.join("actual");
     // Create actual directory and copy files
     if actual_dir.exists() {
         fs::remove_dir_all(&actual_dir)?;
     }
+
+    let input_files = scan_dir(test_case.dir.as_path(), |relative_path, _filename| {
+        relative_path.starts_with("input")
+    })?;
+    let expected_files = scan_dir(test_case.dir.as_path(), |relative_path, _filename| {
+        !relative_path.starts_with("input") && !relative_path.starts_with("ignore_")
+    })?;
+
+    let temp_dir = setup_test_environment(input_files).context("Setup test dir")?;
+
+    // Run the processor
+    let config_file = temp_dir.path().join("input.toml");
+    //chdir to temp_dir
+
     fs::create_dir_all(&actual_dir)?;
     //copy all files from temp_dir to actual_dir
-    for entry in fs::read_dir(temp_dir.path())? {
-        let entry = entry?;
-        let src_path = entry.path();
-        if src_path.is_file() {
-            let dest_path = actual_dir.join(src_path.file_name().unwrap());
-            fs::copy(&src_path, &dest_path)?;
+    visit_dirs(temp_dir.path(), &mut |entry: &DirEntry| -> Result<()> {
+        let path = entry.path();
+        let relative_path = path
+            .strip_prefix(temp_dir.path())
+            .context("Strip prefix from temp dir path")?;
+        let target = actual_dir.join(relative_path);
+        std::fs::create_dir_all(target.parent().unwrap())
+            .context("Create parent directory for actual file")?;
+        if path.is_file() {
+            fs::copy(&path, &target)?;
         }
-    }
+        Ok(())
+    })?;
 
     let proc = std::process::Command::new(processor_cmd)
         .arg(&config_file)
-        .arg(temp_dir.path())
+        //.arg(temp_dir.path())
+        .env("NO_FRIENDLY_PANIC", "1")
         .current_dir(temp_dir.path())
         .output()
         .context(format!("Failed to run {CLI_UNDER_TEST}"))?;
+
+    let all_files_in_temp_dir = scan_dir(temp_dir.path(), |_, _| true)?;
+    copy_files(&all_files_in_temp_dir, actual_dir.as_path())?;
 
     let stdout = String::from_utf8_lossy(&proc.stdout);
     let stderr = String::from_utf8_lossy(&proc.stderr);
@@ -367,153 +428,58 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
     result.stdout = stdout.to_string();
     result.stderr = stderr.to_string();
 
-    //for comparison
-    fs::write(temp_dir.path().join("stdout"), stdout.as_bytes())
-        .context("Failed to write stdout to file")?;
-    /* fs::write(temp_dir.path().join("stderr"), stderr.as_bytes())
-    .context("Failed to write stderr to file")?; */
     //for debugging..
     fs::write(actual_dir.as_path().join("stdout"), stdout.as_bytes())
         .context("Failed to write stdout to file")?;
     fs::write(actual_dir.as_path().join("stderr"), stderr.as_bytes())
         .context("Failed to write stderr to file")?;
 
-    // First, check all files in the temp directory that should match expected outputs
-    visit_dirs(temp_dir.path(), &mut |entry: &DirEntry| -> Result<()> {
-        let path = entry.path();
-        let relative_path = path
-            .strip_prefix(temp_dir.path())
-            .context("Strip prefix from temp dir path")?;
-
-        // Skip input files and special files
-        if let Some(file_name) = path.file_name() {
-            let file_name_str = file_name.to_string_lossy();
-            let parent_name = path
-                .parent()
-                .unwrap()
-                .file_name()
-                .unwrap()
-                .to_string_lossy();
-            if file_name_str.starts_with("input")
-                || file_name_str.starts_with("ignore_")
-                || parent_name.starts_with("ignore_")
-                || file_name_str.starts_with("ignore_")
-            {
-                return Ok(());
-            }
-            for only_if_expected_filename in ["stdout"] {
-                if file_name_str == only_if_expected_filename {
-                    //only check if there's an expected stdout
-                    let expected_path = test_case.dir.join(only_if_expected_filename);
-                    if !expected_path.exists() {
-                        // If there's no expected stdout, skip this file
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        if path.is_file() {
-            let expected_path = test_case.dir.join(relative_path);
-            if expected_path.exists() {
-                // Compare files
-                let expected_content = fs::read(&expected_path)?;
-                let actual_content = fs::read(&path)?;
-
-                if expected_content != actual_content {
-                    //if compressed, compare uncompressed
-                    if expected_path
-                        .extension()
-                        .map_or(false, |ext| ext == "gz" || ext == "zst")
-                    {
-                        let expected_uncompressed = read_compressed(&expected_path)?;
-                        let actual_uncompressed = read_compressed(&path)?;
-                        if expected_uncompressed != actual_uncompressed {
-                            result.mismatched_files.push((
-                                path.to_string_lossy().to_string(),
-                                expected_path.to_string_lossy().to_string(),
-                            ));
-                        }
-                    } else if expected_path.extension().map_or(false, |ext| ext == "json") {
-                        //we need to avoid the <working_dir> in reports
-                        let actual_content = std::str::from_utf8(&actual_content)
-                            .context("Failed to convert actual content to string")?
-                            .replace(temp_dir.path().to_string_lossy().as_ref(), "WORKINGDIR")
-                            .as_bytes()
-                            .to_vec();
-                        //support for _internal_read_count checks.
-                        //thease are essentialy <=, but we just want to compare json as strings, bro
-                        if actual_content != expected_content {
-                            fs::write(&path, &actual_content)
-                                .context("Failed to write actual content to file")?;
-                            result.mismatched_files.push((
-                                path.to_string_lossy().to_string(),
-                                expected_path.to_string_lossy().to_string(),
-                            ));
-                        }
-                    } else if expected_path
-                        .extension()
-                        .map_or(false, |ext| ext == "progress")
-                    {
-                        //remove all numbres from actual and expected and compare again
-                        let expected_wo_numbers = regex::Regex::new(r"\d+")
-                            .unwrap()
-                            .replace_all(std::str::from_utf8(&expected_content).unwrap(), "");
-                        let actual_wo_numbers = regex::Regex::new(r"\d+")
-                            .unwrap()
-                            .replace_all(std::str::from_utf8(&actual_content).unwrap(), "");
-                        if expected_wo_numbers != actual_wo_numbers {
-                            result.mismatched_files.push((
-                                path.to_string_lossy().to_string(),
-                                expected_path.to_string_lossy().to_string(),
-                            ));
-                        }
-                    } else {
-                        result.mismatched_files.push((
-                            path.to_string_lossy().to_string(),
-                            expected_path.to_string_lossy().to_string(),
-                        ));
-                    }
-                }
-            } else {
-                // Expected file doesn't exist - this is a new output file
-                result
-                    .unexpected_files
-                    .push(path.to_string_lossy().to_string());
-            }
-        }
-        Ok(())
+    let output_files_in_temp_dir = scan_dir(temp_dir.path(), |relative_path, _| {
+        !relative_path.starts_with("input")
     })?;
 
-    // Also check if there are any expected output files that weren't produced
-    for entry in fs::read_dir(&test_case.dir)? {
-        let entry = entry?;
-        let expected_path = entry.path();
+    let missing_files = dir_diff(
+        relative(&expected_files),
+        relative(&output_files_in_temp_dir),
+    )?;
+    let unexpected_files = dir_diff(
+        relative(&output_files_in_temp_dir),
+        relative(&expected_files),
+    )?;
+    let common_files = dir_common(
+        relative(&expected_files),
+        relative(&output_files_in_temp_dir),
+    )?;
 
-        if expected_path.is_file() {
-            if let Some(file_name) = expected_path.file_name() {
-                let file_name_str = file_name.to_string_lossy();
+    let mut missmatched_files = Vec::new();
 
-                // Skip non-output files
-                if file_name_str.starts_with("input")
-                    || file_name_str == "expected_panic.txt"
-                    || file_name_str == "error"
-                    || file_name_str == "repeat"
-                    || file_name_str == "top.json"
-                {
-                    continue;
-                }
-
-                let actual_path = temp_dir.path().join(&file_name);
-                if !actual_path.exists() {
-                    // Expected output file was not produced
-                    result
-                        .missing_files
-                        .push(expected_path.to_string_lossy().to_string());
-                }
-            }
+    for relative_filename in common_files {
+        // Compare each file in the common filesi
+        if !files_equal(
+            test_case.dir.join(&relative_filename),
+            temp_dir.path().join(&relative_filename),
+        )
+        .unwrap()
+        {
+            missmatched_files.push((
+                temp_dir
+                    .path()
+                    .join(&relative_filename)
+                    .to_string_lossy()
+                    .to_string(),
+                test_case
+                    .dir
+                    .join(&relative_filename)
+                    .to_string_lossy()
+                    .to_string(),
+            ));
         }
     }
+    result.missing_files = missing_files;
+    result.unexpected_files = unexpected_files;
+    result.mismatched_files = missmatched_files;
+
+    // First, check all files in the temp directory that should match expected outputs
 
     if !(result.missing_files.is_empty()
         && result.mismatched_files.is_empty()
@@ -546,28 +512,55 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
     Ok(result)
 }
 
-fn setup_test_environment(test_dir: &Path) -> Result<TempDir> {
-    let temp_dir = tempfile::tempdir().context("make tempdir")?;
-
-    // Copy input.toml
-    let input_toml_src = test_dir.join("input.toml");
-    let input_toml_dst = temp_dir.path().join("input.toml");
-    fs::copy(&input_toml_src, &input_toml_dst).context("copy input file")?;
-
-    // Copy any input*.fq* files
-    for entry in fs::read_dir(test_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(file_name) = path.file_name() {
-                let file_name_str = file_name.to_string_lossy();
-                if file_name_str.starts_with("input_") {
-                    let dst_path = temp_dir.path().join(file_name);
-                    fs::copy(&path, &dst_path)?;
-                }
-            }
-        }
+fn files_equal(file_a: PathBuf, file_b: PathBuf) -> Result<bool> {
+    let content_a = ex::fs::read(&file_a).unwrap();
+    let content_b = ex::fs::read(&file_b).unwrap();
+    if content_a == content_b {
+        return Ok(true);
     }
+    let uncompressed_a = read_compressed(&file_a)?;
+    let uncompressed_b = read_compressed(&file_b)?;
+    Ok(uncompressed_a == uncompressed_b)
+}
+
+fn copy_files(input_files: &Vec<(PathBuf, String)>, target_dir: &Path) -> Result<()> {
+    for (input_file, relative_path) in input_files {
+        let dst_path = target_dir.join(relative_path);
+        std::fs::create_dir_all(dst_path.parent().unwrap())?;
+        fs::copy(&input_file, &dst_path)?;
+    }
+    Ok(())
+}
+
+fn setup_test_environment(input_files: Vec<(PathBuf, String)>) -> Result<TempDir> {
+    let temp_dir = tempfile::tempdir().context("make tempdir")?;
+    copy_files(&input_files, temp_dir.path()).context("Copy input files to temp dir")?;
 
     Ok(temp_dir)
+}
+
+fn dir_diff(files_a: Vec<String>, files_b: Vec<String>) -> Result<Vec<String>> {
+    let mut diff = Vec::new();
+    let set_b: std::collections::HashSet<_> = files_b.iter().collect();
+    for file in files_a {
+        if !set_b.contains(&file) {
+            diff.push(file.clone());
+        }
+    }
+    Ok(diff)
+}
+
+fn dir_common(files_a: Vec<String>, files_b: Vec<String>) -> Result<Vec<String>> {
+    let mut common = Vec::new();
+    let set_b: std::collections::HashSet<_> = files_b.iter().collect();
+    for file in files_a {
+        if set_b.contains(&file) {
+            common.push(file.clone());
+        }
+    }
+    Ok(common)
+}
+
+fn relative(files: &Vec<(PathBuf, String)>) -> Vec<String> {
+    files.iter().map(|(_, relative)| relative.clone()).collect()
 }

@@ -1,0 +1,11 @@
+# a basic reproduction of samtools idxstats
+[input]
+	bam = "input.bam"
+	# gtf = input.gtf
+
+[quantification]
+   mode = "references"
+
+
+[output]
+	directory = 'output'

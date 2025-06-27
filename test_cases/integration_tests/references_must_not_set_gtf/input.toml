@@ -3,7 +3,7 @@
 	gtf = "input.gtf"
 
 [quantification]
-   mode = "Contig"
+   mode = "References"
 
 
 [output]

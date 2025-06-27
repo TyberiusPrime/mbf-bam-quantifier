@@ -1,0 +1,10 @@
+[input]
+	bam = "input.bam"
+	gtf = "input.gtf"
+
+[quantification]
+   mode = "References"
+
+
+[output]
+	directory = 'output'

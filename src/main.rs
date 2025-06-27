@@ -1,4 +1,3 @@
-
 use human_panic::{setup_panic, Metadata};
 use std::path::PathBuf;
 
@@ -17,12 +16,15 @@ fn print_usage(exit_code: i32) -> ! {
 }
 
 fn main() -> Result<()> {
-    setup_panic!(
+    // if not NO_FRIENDLY_PANIC in env
+    if std::env::var("NO_FRIENDLY_PANIC").is_err() {
+        setup_panic!(
         Metadata::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
             //.authors("My Company Support <support@mycompany.com>")
             .homepage("https://github.com/TyberiusPrime/mbf-bam-quantifier")
             .support("Open a github issue at https://github.com/TyberiusPrime/mbf-bam-quantifier/issues/new and attach the crash report.")
     );
+    }
 
     assert!(
         !std::env::args().any(|x| x == "--test-friendly-panic"),
@@ -44,8 +46,8 @@ fn main() -> Result<()> {
         .context("First argument must be a toml file path.")?;
     let toml_file = PathBuf::from(toml_file);
     /* let current_dir = std::env::args()
-        .nth(2)
-        .map_or_else(|| std::env::current_dir().unwrap(), PathBuf::from); */
+    .nth(2)
+    .map_or_else(|| std::env::current_dir().unwrap(), PathBuf::from); */
     if let Err(e) = mbf_bam_quantifier::run(&toml_file) {
         eprintln!(
             "Unfortunatly an error was detected and lead to an early exit.\n\nDetails: {e:?}",

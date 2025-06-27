@@ -19,3 +19,4 @@ docs/public
 Session.vim
 .aider*
 tests/failures
+**/actual/**
