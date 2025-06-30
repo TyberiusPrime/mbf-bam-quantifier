@@ -12,3 +12,5 @@
 - can we split our intervals bgfz borders? 
 
 - extract for umi / barcodes
+
+- unify from stranded/unstraded code bases?

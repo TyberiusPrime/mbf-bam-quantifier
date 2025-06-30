@@ -67,12 +67,6 @@ pub fn build_trees_from_gtf(
         gtf_entries.end.iter(),
         gtf_entries.strand.iter(),
     ) {
-        println!(
-            "{} {} {}",
-            *seq_name_cat_id,
-            gene_id,
-            gtf_entries.seqname.cat_from_value(*seq_name_cat_id)
-        );
         let (gene_nos, genes_in_order) = gene_nos_by_chr
             .entry(*seq_name_cat_id)
             .or_insert_with(|| (HashMap::new(), Vec::new()));

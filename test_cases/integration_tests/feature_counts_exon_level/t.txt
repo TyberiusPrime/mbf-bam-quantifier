@@ -1,0 +1,53 @@
+    Finished `release` profile [optimized] target(s) in 0.16s
+     Running `/home/finkernagel/upstream/mbf-bam-quantifier/target/release/mbf-bam-quantifier test.toml`
+[src/quantification/stranded.rs:109:9] &feature_trees.get("7").unwrap().1 = [
+    "ENSG00000105821",
+    "ENSG00000289613",
+]
+[src/quantification/stranded.rs:215:13] &read = Record(tid: 19, pos: 103315751)
+[src/quantification/stranded.rs:215:13] read.is_reverse() = false
+[src/quantification/stranded.rs:215:13] read.blocks() = [
+    (
+        103315751,
+        103315802,
+    ),
+]
+[src/quantification/stranded.rs:252:13] &gene_nos_seen_forward = {
+    0,
+    1,
+}
+[src/quantification/stranded.rs:252:13] &gene_nos_seen_reverse = {}
+[src/quantification/stranded.rs:215:13] &read = Record(tid: 19, pos: 103315840)
+[src/quantification/stranded.rs:215:13] read.is_reverse() = true
+[src/quantification/stranded.rs:215:13] read.blocks() = [
+    (
+        103315840,
+        103315862,
+    ),
+    (
+        103315862,
+        103315871,
+    ),
+    (
+        103315987,
+        103316006,
+    ),
+]
+[src/quantification/stranded.rs:252:13] &gene_nos_seen_forward = {}
+[src/quantification/stranded.rs:252:13] &gene_nos_seen_reverse = {
+    1,
+    0,
+}
+[src/quantification/stranded.rs:215:13] &read = Record(tid: 19, pos: 103315987)
+[src/quantification/stranded.rs:215:13] read.is_reverse() = true
+[src/quantification/stranded.rs:215:13] read.blocks() = [
+    (
+        103315987,
+        103316036,
+    ),
+]
+[src/quantification/stranded.rs:252:13] &gene_nos_seen_forward = {}
+[src/quantification/stranded.rs:252:13] &gene_nos_seen_reverse = {
+    1,
+    0,
+}

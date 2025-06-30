@@ -3,10 +3,15 @@
 	bam = "input.bam"
 	gtf = "input.gtf.gz"
 
+[[filter]]
+	mode = "multimapper"
+	action = "remove"
+
 [quant]
-   mode = "featurecounts"
+   mode = "gtf_stranded"
    feature = 'gene'
    id_attribute = 'gene_id'
+   direction = 'forward'
 
 
 [output]

@@ -13,6 +13,7 @@
    id_attribute = 'contig_id'
    split_feature = 'contig'
    split_id_attribute = 'contig_id'
+	direction ='forward'
 
 
 [output]

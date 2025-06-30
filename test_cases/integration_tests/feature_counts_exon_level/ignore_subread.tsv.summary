@@ -1,5 +1,5 @@
 Status	input.bam
-Assigned	3561
+Assigned	192893
 Unassigned_Unmapped	0
 Unassigned_Read_Type	0
 Unassigned_Singleton	0
@@ -10,6 +10,6 @@ Unassigned_Duplicate	0
 Unassigned_MultiMapping	101565
 Unassigned_Secondary	0
 Unassigned_NonSplit	0
-Unassigned_NoFeatures	210883
+Unassigned_NoFeatures	13679
 Unassigned_Overlapping_Length	0
-Unassigned_Ambiguity	44
+Unassigned_Ambiguity	7916

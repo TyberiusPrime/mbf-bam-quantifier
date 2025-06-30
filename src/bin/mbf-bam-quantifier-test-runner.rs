@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs::{self, DirEntry};
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
@@ -480,9 +480,9 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
         && result.unexpected_files.is_empty())
     {
         // Create actual directory and copy files
-        if actual_dir.exists() {
+        /* if actual_dir.exists() {
             fs::remove_dir_all(&actual_dir)?;
-        }
+        } */
         fs::create_dir_all(&actual_dir)?;
         //copy all files from temp_dir to actual_dir
         visit_dirs(temp_dir.path(), &mut |entry| {
@@ -512,9 +512,31 @@ fn files_equal(file_a: PathBuf, file_b: PathBuf) -> Result<bool> {
     if content_a == content_b {
         return Ok(true);
     }
-    let uncompressed_a = read_compressed(&file_a)?;
-    let uncompressed_b = read_compressed(&file_b)?;
-    Ok(uncompressed_a == uncompressed_b)
+    if file_a.extension() == Some(std::ffi::OsStr::new("gz"))
+        && file_b.extension() == Some(std::ffi::OsStr::new("gz"))
+    {
+        let uncompressed_a = read_compressed(&file_a)?;
+        let uncompressed_b = read_compressed(&file_b)?;
+        return Ok(uncompressed_a == uncompressed_b);
+    }
+    let comparison_script = file_a.with_file_name(format!(
+        "compare_{}",
+        file_a.file_name().unwrap().to_string_lossy()
+    ));
+    if comparison_script.exists() {
+        let output = std::process::Command::new(&comparison_script)
+            .arg(&file_a)
+            .arg(&file_b)
+            .output()
+            .context("Failed to run comparison script. Is it executable?")?;
+        if output.status.success() {
+            return Ok(true);
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Comparison script failed with error: {}", stderr.trim());
+        }
+    }
+    Ok(false)
 }
 
 fn copy_files(input_files: &Vec<(PathBuf, String)>, target_dir: &Path) -> Result<()> {

@@ -1,11 +1,11 @@
-use super::{IntervalCounter, IntervalResult, OurTree, Quant, build_trees_from_gtf};
+use super::{build_trees_from_gtf, IntervalCounter, IntervalResult, OurTree, Quant};
 use crate::{
     bam_ext::BamRecordExtensions,
     config::{Input, Output},
     filters::{Filter, ReadFilter},
     quantification::IntervalIntermediateResult,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use rust_htslib::bam::{self, Read};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -23,6 +23,15 @@ fn default_split_id_attribute() -> String {
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
+enum Direction {
+    #[serde(alias = "forward")]
+    Forward,
+    #[serde(alias = "reverse")]
+    Reverse,
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Quantification {
     feature: String,
     id_attribute: String,
@@ -30,6 +39,7 @@ pub struct Quantification {
     split_feature: String,
     #[serde(default = "default_split_id_attribute")]
     split_id_attribute: String,
+    direction: Direction,
 }
 
 impl Quantification {
@@ -65,12 +75,21 @@ impl Quant for Quantification {
                 .get(&self.id_attribute)
                 .context("Missing id attribute")?
                 .iter();
-            entries
-                .strand
-                .iter()
-                .zip(ids)
-                .map(|(strand, id)| (id.to_string(), *strand))
-                .collect()
+            let mut res = HashMap::new();
+            for (strand, id) in entries.strand.iter().zip(ids) {
+                match res.entry(id.to_string()) {
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        let last_value = e.get();
+                        if *last_value != *strand {
+                            bail!("Strand mismatch for ID {}: differing stands when aggregating by {} ", id, &self.id_attribute);
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(*strand);
+                    }
+                }
+            }
+            res.into_iter().collect()
         };
 
         let split_entries = gtf_entrys
@@ -95,24 +114,32 @@ impl Quant for Quantification {
             split_trees,
             filters,
         )?; //these are counts in (forward, reverse) orientation.
-        //We now need to to swap / sum them depending on what's in the gtf.
+            //We now need to to swap / sum them depending on what's in the gtf.
 
         for (entry_id, strand) in strand_info {
+            let debug = entry_id == "ENSG00000000003";
             match counts.counts.entry(entry_id) {
-                std::collections::hash_map::Entry::Occupied(mut e) => match strand {
-                    1 => {}
-                    -1 => {
-                        let c = e.get_mut();
-                        *c = (c.1, c.0); // swap forward and reverse counts
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    if debug {
+                        dbg!(strand, &self.direction, e.get());
                     }
-                    0 => {
-                        let c = e.get_mut();
-                        *c = (c.0 + c.1, 0); // sum counts, set reverse to 0
+                    match (strand, &self.direction) {
+                        (1, Direction::Forward) | (-1, Direction::Reverse) => {
+                            // do nothing, counts are already in the right orientation
+                        }
+                        (1, Direction::Reverse) | (-1, Direction::Forward) => {
+                            let c = e.get_mut();
+                            *c = (c.1, c.0); // swap forward and reverse counts
+                        }
+                        (0, _) => {
+                            let c = e.get_mut();
+                            *c = (c.0 + c.1, 0); // sum counts, set reverse to 0
+                        }
+                        _ => {
+                            bail!("Unexpected strand value in GTF: {}", strand);
+                        }
                     }
-                    _ => {
-                        bail!("Unexpected strand value in GTF: {}", strand);
-                    }
-                },
+                }
                 std::collections::hash_map::Entry::Vacant(e) => {
                     e.insert((0, 0)); // initialize with zero counts
                 }
@@ -177,6 +204,7 @@ impl IntervalCounter for StrandedCounter {
         bam.fetch((tid, start as u64, stop as u64))?;
         'outer: while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
+            total_count += 1;
             for f in filters.iter() {
                 if f.remove_read(&read) {
                     // if the read does not pass the filter, skip it
@@ -184,6 +212,7 @@ impl IntervalCounter for StrandedCounter {
                     continue 'outer;
                 }
             }
+            dbg!(&read, read.is_reverse(), read.blocks());
             // do not count multiple blocks matching in one gene multiple times
             gene_nos_seen_forward.clear();
             gene_nos_seen_reverse.clear();
@@ -220,12 +249,16 @@ impl IntervalCounter for StrandedCounter {
             if !hit && !skipped {
                 outside_count += 1;
             }
-            total_count += 1;
-            for gene_no in gene_nos_seen_forward.iter() {
-                result[*gene_no as usize].0 += 1;
-            }
-            for gene_no in gene_nos_seen_reverse.iter() {
-                result[*gene_no as usize].1 += 1;
+            dbg!(&gene_nos_seen_forward, &gene_nos_seen_reverse);
+
+            if gene_nos_seen_forward.len() == 1 {
+                for gene_no in gene_nos_seen_forward.iter() {
+                    result[*gene_no as usize].0 += 1;
+                }
+            } else if gene_nos_seen_reverse.len() == 1 {
+                for gene_no in gene_nos_seen_reverse.iter() {
+                    result[*gene_no as usize].1 += 1;
+                }
             }
         }
         Ok(IntervalIntermediateResult {

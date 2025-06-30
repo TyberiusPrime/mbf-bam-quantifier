@@ -1,0 +1,22 @@
+# a basic reproduction of samtools idxstats
+[input]
+	bam = "test.bam"
+	gtf = "test.gtf"
+
+
+[[filter]]
+	mode = "multimapper"
+	action = "remove"
+
+
+[quant]
+   mode = "gtf_stranded"
+   feature = 'exon'
+   id_attribute = 'exon_id'
+   split_feature = 'exon'
+   split_id_attribute = 'exon_id'
+   direction = 'Forward'
+
+
+[output]
+	directory = 'output_test'

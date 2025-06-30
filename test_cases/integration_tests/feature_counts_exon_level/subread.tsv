@@ -1,0 +1,8 @@
+# Program:featureCounts v2.1.1; Command:"featureCounts" "-a" "test.gtf" "-o" "subread.tsv" "test.bam" "-t" "exon" "-s" "1" "-f" "-g" "exon_id" "--verbose" 
+Geneid	Chr	Start	End	Strand	Length	test.bam
+ENSE00003937989	1	144439829	144440038	-	210	0
+ENSE00003937989	1	144439829	144440038	-	210	0
+ENSE00003937989	1	144439829	144440038	-	210	0
+ENSE00003937989	1	144439829	144440038	-	210	0
+ENSE00003937989	1	144439829	144440038	-	210	0
+ENSE00002728978	1	144439993	144440038	-	46	0

@@ -1,14 +1,22 @@
 # a basic reproduction of samtools idxstats
 [input]
-	bam = input.bam
-	gtf = input.gtf.gz
+	bam = "input.bam"
+	gtf = "input.gtf.gz"
 
-[quantifaction]
-   mode = "featurecounts"
+
+[[filter]]
+	mode = "multimapper"
+	action = "remove"
+
+
+[quant]
+   mode = "gtf_stranded"
    feature = 'exon'
-   id_attribute = 'gene_id'
+   id_attribute = 'exon_id'
+   split_feature = 'exon'
+   split_id_attribute = 'exon_id'
+   direction = 'Forward'
 
 
 [output]
-	filename = 'output.tsv'
-	mode = 'TSV'
+	directory = 'output'
