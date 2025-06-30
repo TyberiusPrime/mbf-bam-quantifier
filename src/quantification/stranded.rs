@@ -1,11 +1,11 @@
-use super::{build_trees_from_gtf, IntervalCounter, IntervalResult, OurTree, Quant};
+use super::{IntervalCounter, IntervalResult, OurTree, Quant, build_trees_from_gtf};
 use crate::{
     bam_ext::BamRecordExtensions,
     config::{Input, Output},
     filters::{Filter, ReadFilter},
     quantification::IntervalIntermediateResult,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rust_htslib::bam::{self, Read};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -95,7 +95,7 @@ impl Quant for Quantification {
             split_trees,
             filters,
         )?; //these are counts in (forward, reverse) orientation.
-            //We now need to to swap / sum them depending on what's in the gtf.
+        //We now need to to swap / sum them depending on what's in the gtf.
 
         for (entry_id, strand) in strand_info {
             match counts.counts.entry(entry_id) {
@@ -170,6 +170,7 @@ impl IntervalCounter for StrandedCounter {
         let mut result = vec![(0, 0); gene_ids_len as usize];
         let mut gene_nos_seen_forward = HashSet::<u32>::new();
         let mut gene_nos_seen_reverse = HashSet::<u32>::new();
+        let mut filtered_count = 0;
         let mut outside_count = 0;
         let mut total_count = 0;
         let mut read: bam::Record = bam::Record::new();
@@ -179,6 +180,7 @@ impl IntervalCounter for StrandedCounter {
             for f in filters.iter() {
                 if f.remove_read(&read) {
                     // if the read does not pass the filter, skip it
+                    filtered_count += 1;
                     continue 'outer;
                 }
             }
@@ -228,6 +230,7 @@ impl IntervalCounter for StrandedCounter {
         }
         Ok(IntervalIntermediateResult {
             counts: result,
+            filtered: filtered_count,
             total: total_count,
             outside: outside_count,
         })
@@ -239,6 +242,7 @@ impl IntervalCounter for StrandedCounter {
     ) -> IntervalResult<Self::OutputType> {
         IntervalResult {
             counts: add_dual_hashmaps(a.counts, b.counts),
+            filtered: a.filtered + b.filtered,
             total: a.total + b.total,
             outside: a.outside + b.outside,
         }

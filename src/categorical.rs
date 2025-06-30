@@ -67,8 +67,7 @@ impl Categorical {
 }
 
 #[cfg(test)]
-mod test
-{
+mod test {
     use super::*;
     #[test]
     fn test_cats() {

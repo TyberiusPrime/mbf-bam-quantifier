@@ -38,7 +38,9 @@ impl ReadFilter for MultiMapper {
             Ok(Aux::U32(value)) => value > 1,
 
             _ => {
-                panic!("read had no NH tag (or wasn't an integer). Can't remove multi mappers. Aborting")
+                panic!(
+                    "read had no NH tag (or wasn't an integer). Can't remove multi mappers. Aborting"
+                )
             }
         };
         match self.action {

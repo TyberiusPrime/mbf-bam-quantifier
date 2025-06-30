@@ -1,8 +1,11 @@
-use super::{build_trees_from_gtf, IntervalCounter, IntervalResult, OurTree, Quant};
+use super::{IntervalCounter, IntervalResult, OurTree, Quant, build_trees_from_gtf};
 use crate::{
-    bam_ext::BamRecordExtensions, config::{Input, Output}, filters::{Filter, ReadFilter}, quantification::IntervalIntermediateResult
+    bam_ext::BamRecordExtensions,
+    config::{Input, Output},
+    filters::{Filter, ReadFilter},
+    quantification::IntervalIntermediateResult,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rust_htslib::bam::{self, Read};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -44,7 +47,12 @@ impl Quantification {
 }
 
 impl Quant for Quantification {
-    fn quantify(&mut self, input: &Input, filters: &[Filter], output: &Output) -> anyhow::Result<()> {
+    fn quantify(
+        &mut self,
+        input: &Input,
+        filters: &[Filter],
+        output: &Output,
+    ) -> anyhow::Result<()> {
         let mut gtf_entrys =
             input.read_gtf(&[self.feature.as_str(), self.split_feature.as_str()])?;
 
@@ -124,6 +132,7 @@ impl IntervalCounter for UnstrandedCounter {
     ) -> Result<IntervalIntermediateResult<Self::OutputType>> {
         let mut result = vec![0; gene_ids_len as usize];
         let mut gene_nos_seen = HashSet::<u32>::new();
+        let mut filtered_count = 0;
         let mut outside_count = 0;
         let mut total_count = 0;
         let mut read: bam::Record = bam::Record::new();
@@ -133,6 +142,7 @@ impl IntervalCounter for UnstrandedCounter {
             for f in filters.iter() {
                 if f.remove_read(&read) {
                     // if the read does not pass the filter, skip it
+                    filtered_count += 0;
                     continue 'outer;
                 }
             }
@@ -173,6 +183,7 @@ impl IntervalCounter for UnstrandedCounter {
         }
         Ok(IntervalIntermediateResult {
             counts: result,
+            filtered: filtered_count,
             total: total_count,
             outside: outside_count,
         })
@@ -184,6 +195,7 @@ impl IntervalCounter for UnstrandedCounter {
     ) -> IntervalResult<Self::OutputType> {
         IntervalResult {
             counts: add_hashmaps(a.counts, b.counts),
+            filtered: a.filtered + b.filtered,
             total: a.total + b.total,
             outside: a.outside + b.outside,
         }

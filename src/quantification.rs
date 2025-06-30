@@ -109,6 +109,7 @@ pub fn build_trees_from_gtf(
 #[derive(Debug)]
 struct IntervalResult<T: std::marker::Send + std::marker::Sync + std::fmt::Debug> {
     counts: HashMap<String, T>,
+    filtered: usize,
     total: usize,
     outside: usize,
 }
@@ -117,6 +118,7 @@ impl<T: std::marker::Send + std::marker::Sync + std::fmt::Debug> IntervalResult<
     fn new() -> Self {
         IntervalResult {
             counts: HashMap::new(),
+            filtered: 0,
             total: 0,
             outside: 0,
         }
@@ -126,6 +128,7 @@ impl<T: std::marker::Send + std::marker::Sync + std::fmt::Debug> IntervalResult<
 #[derive(Debug)]
 struct IntervalIntermediateResult<T: std::marker::Send + std::marker::Sync + std::fmt::Debug> {
     counts: Vec<T>,
+    filtered: usize,
     total: usize,
     outside: usize,
 }
@@ -179,6 +182,7 @@ where
                         .collect::<HashMap<String, Self::OutputType>>();
                     IntervalResult {
                         counts: result,
+                        filtered: local_result.filtered,
                         total: local_result.total,
                         outside: local_result.outside,
                     }

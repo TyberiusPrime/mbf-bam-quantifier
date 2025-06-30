@@ -28,7 +28,6 @@ pub struct Output {
     pub directory: String,
 }
 
-
 impl Config {
     pub fn check(&self) -> Result<()> {
         self.quantification.check(self)?;
