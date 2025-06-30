@@ -1,26 +1,10 @@
-use anyhow::{Result, bail};
 use rust_htslib::bam;
 use rust_htslib::bam::ext::BamRecordExtensions as htslib_record_extensions;
-use std::path::Path;
-
-/// Wrapper for opening a BAM file.
-pub fn open_bam(
-    bam_filename: impl AsRef<Path>,
-    bai_filename: Option<impl AsRef<Path>>,
-) -> Result<bam::IndexedReader> {
-    let bam = match bai_filename {
-        Some(ifn) => bam::IndexedReader::from_path_and_index(bam_filename.as_ref(), ifn.as_ref()),
-        _ => bam::IndexedReader::from_path(bam_filename.as_ref()),
-    };
-    match bam {
-        Ok(x) => Ok(x),
-        Err(e) => bail!("Could not read bam: {}", e),
-    }
-}
 
 pub trait BamRecordExtensions {
     fn blocks(&self) -> Vec<(u32, u32)>;
     ///find intron positions (start, stop)
+    #[allow(dead_code)] //todo: check
     fn introns(&self) -> Vec<(u32, u32)>;
 }
 
@@ -41,8 +25,8 @@ impl BamRecordExtensions for bam::Record {
 #[cfg(test)]
 mod tests {
     use crate::bam_ext::BamRecordExtensions;
-    use rust_htslib::bam::Read;
     use rust_htslib::bam;
+    use rust_htslib::bam::Read;
 
     #[test]
     fn spliced_reads() {

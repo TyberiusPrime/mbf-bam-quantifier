@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs::{self, DirEntry};
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
@@ -335,7 +335,7 @@ fn scan_dir<F: Fn(&str, &str) -> bool>(dir: &Path, callback: F) -> Result<Vec<(P
         let path = if path.is_symlink() {
             let res_path = fs::read_link(&path)
                 .with_context(|| format!("Failed to read symlink: {}", path.display()))?;
-            let res_path = if res_path.is_relative() {
+            if res_path.is_relative() {
                 path.parent()
                     .context("Get parent directory of symlink")?
                     .join(res_path)
@@ -343,13 +343,7 @@ fn scan_dir<F: Fn(&str, &str) -> bool>(dir: &Path, callback: F) -> Result<Vec<(P
                     .with_context(|| format!("Failed to follow symlink: {}", path.display()))?
             } else {
                 res_path
-            };
-            /* println!(
-                "Found symlink: {} -> {}",
-                path.display(),
-                res_path.display()
-            ); */
-            res_path
+            }
         } else {
             path
         };
@@ -497,7 +491,7 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
                 .strip_prefix(temp_dir.path())
                 .context("Strip prefix from temp dir path")?;
             if absolute_src_path.is_file() {
-                let dest_path = actual_dir.join(&relative_src_path);
+                let dest_path = actual_dir.join(relative_src_path);
                 std::fs::create_dir_all(dest_path.parent().unwrap())?;
                 fs::copy(&absolute_src_path, &dest_path)?;
             }
@@ -527,7 +521,7 @@ fn copy_files(input_files: &Vec<(PathBuf, String)>, target_dir: &Path) -> Result
     for (input_file, relative_path) in input_files {
         let dst_path = target_dir.join(relative_path);
         std::fs::create_dir_all(dst_path.parent().unwrap())?;
-        fs::copy(&input_file, &dst_path)?;
+        fs::copy(input_file, &dst_path)?;
     }
     Ok(())
 }
@@ -561,6 +555,6 @@ fn dir_common(files_a: Vec<String>, files_b: Vec<String>) -> Result<Vec<String>>
     Ok(common)
 }
 
-fn relative(files: &Vec<(PathBuf, String)>) -> Vec<String> {
+fn relative(files: &[(PathBuf, String)]) -> Vec<String> {
     files.iter().map(|(_, relative)| relative.clone()).collect()
 }

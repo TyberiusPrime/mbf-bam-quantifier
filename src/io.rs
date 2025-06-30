@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
+use rust_htslib::bam;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn open_file(filename: impl AsRef<Path>) -> Result<Box<dyn Read + Send>> {
     let fh = ex::fs::File::open(filename.as_ref())
@@ -10,19 +11,12 @@ pub fn open_file(filename: impl AsRef<Path>) -> Result<Box<dyn Read + Send>> {
 }
 
 pub fn open_indexed_bam(
-    filename: impl AsRef<Path>,
-    index_filename: Option<impl AsRef<Path>>,
-) -> Result<rust_htslib::bam::IndexedReader> {
-    let mut reader = if let Some(index_filename) = index_filename {
-        let filename: &Path = filename.as_ref();
-        let filename = filename.to_owned();
-        let index_filename_path: PathBuf = index_filename.as_ref().into();
-        //htslib wants the same AsRef<Path> twice
-        rust_htslib::bam::IndexedReader::from_path_and_index(&filename, &index_filename_path)
-            .context(format!("Failed to open indexed BAM file: {:?}", &filename))?
-    } else {
-        rust_htslib::bam::IndexedReader::from_path(&filename)
-            .context(format!("Failed to open BAM file: {:?}", &filename.as_ref()))?
+    bam_filename: impl AsRef<Path>,
+    bai_filename: Option<impl AsRef<Path>>,
+) -> Result<bam::IndexedReader> {
+    let bam = match bai_filename {
+        Some(ifn) => bam::IndexedReader::from_path_and_index(bam_filename.as_ref(), ifn.as_ref()),
+        _ => bam::IndexedReader::from_path(bam_filename.as_ref()),
     };
-    Ok(reader)
+    bam.context("Could not read bam: {}")
 }

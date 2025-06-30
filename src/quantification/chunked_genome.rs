@@ -3,8 +3,6 @@ use rust_htslib::bam;
 use rust_htslib::bam::Read;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::str;
-
 pub struct ChunkedGenome {
     trees: Option<HashMap<String, (OurTree, Vec<String>)>>,
     bam: bam::IndexedReader,
@@ -21,8 +19,8 @@ impl ChunkedGenome {
     ) -> ChunkedGenome {
         let chrs_in_tree_and_bam = trees
             .keys()
-            .map(|x| x.clone())
             .filter(|x| bam.header().tid(x.as_bytes()).is_some())
+            .cloned()
             .collect();
         ChunkedGenome {
             chromosomes: chrs_in_tree_and_bam,
@@ -30,7 +28,8 @@ impl ChunkedGenome {
             bam,
         }
     }
-    pub fn new_without_tree(bam: bam::IndexedReader) -> ChunkedGenome {
+
+    /* pub fn new_without_tree(bam: bam::IndexedReader) -> ChunkedGenome {
         ChunkedGenome {
             trees: None,
             chromosomes: bam
@@ -41,10 +40,11 @@ impl ChunkedGenome {
                 .collect(),
             bam,
         }
-    }
+    } */
+
     pub fn iter(&self) -> ChunkedGenomeIterator {
         ChunkedGenomeIterator {
-            cg: &self,
+            cg: self,
             it: self.chromosomes.iter(),
             last_start: 0,
             last_tid: 0,
@@ -70,15 +70,12 @@ pub struct Chunk {
     pub stop: u32,
 }
 
-impl<'a> Iterator for ChunkedGenomeIterator<'a> {
+impl Iterator for ChunkedGenomeIterator<'_> {
     type Item = Chunk;
     fn next(&mut self) -> Option<Chunk> {
         let chunk_size = 1_000_000;
         if self.last_start >= self.last_chr_length {
-            let next_chr = match self.it.next() {
-                Some(x) => x,
-                None => return None,
-            };
+            let next_chr = self.it.next()?;
             let tid = self.cg.bam.header().tid(next_chr.as_bytes()).unwrap();
             let chr_length = u32::try_from(self.cg.bam.header().target_len(tid).unwrap())
                 .expect("Not u64 contig length aware");

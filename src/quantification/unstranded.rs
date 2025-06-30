@@ -5,7 +5,7 @@ use crate::{
     quantification::IntervalIntermediateResult,
 };
 use anyhow::{bail, Context, Result};
-use rust_htslib::bam::{self, record::Aux, Read};
+use rust_htslib::bam::{self, Read};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -80,7 +80,7 @@ impl Quant for Quantification {
 
         for feature_id in &sorted_keys {
             let count = counts.counts.get(feature_id).unwrap();
-            out_buffer.write(format!("{}\t{}\n", feature_id, count).as_bytes())?;
+            out_buffer.write_all(format!("{}\t{}\n", feature_id, count).as_bytes())?;
         }
         //todo: write total / outside to some sidechannel?
 
@@ -110,6 +110,7 @@ struct UnstrandedCounter {}
 impl IntervalCounter for UnstrandedCounter {
     type OutputType = u32;
 
+    #[allow(clippy::nonminimal_bool)]
     fn count_in_region(
         bam: &mut rust_htslib::bam::IndexedReader,
         tree: &OurTree,
@@ -148,7 +149,7 @@ impl IntervalCounter for UnstrandedCounter {
                     for r in tree.find(iv.0..iv.1) {
                         hit = true;
                         let entry = r.data();
-                        let gene_no = (*entry).0;
+                        let gene_no = entry.0;
                         gene_nos_seen.insert(gene_no);
                     }
                 }

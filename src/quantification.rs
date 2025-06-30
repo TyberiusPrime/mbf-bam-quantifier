@@ -47,7 +47,7 @@ pub fn build_trees_from_gtf(
 ) -> Result<HashMap<String, (OurTree, Vec<String>)>> {
     let mut trees: HashMap<u32, OurTree> = HashMap::new();
     let mut gene_nos_by_chr = HashMap::new();
-    for (line, (seq_name_cat_id, gene_id, start, end, strand)) in izip!(
+    for (seq_name_cat_id, gene_id, start, end, strand) in izip!(
         gtf_entries.seqname.values.iter(),
         gtf_entries
             .vec_attributes
@@ -57,9 +57,7 @@ pub fn build_trees_from_gtf(
         gtf_entries.start.iter(),
         gtf_entries.end.iter(),
         gtf_entries.strand.iter(),
-    )
-    .enumerate()
-    {
+    ) {
         println!(
             "{} {} {}",
             *seq_name_cat_id,
@@ -76,7 +74,7 @@ pub fn build_trees_from_gtf(
 
         let tree = trees
             .entry(*seq_name_cat_id)
-            .or_insert_with(|| OurTree::new());
+            .or_default();
         let start: u32 = (*start)
             .try_into()
             .context("Start value is not a valid u64")?;
@@ -87,7 +85,7 @@ pub fn build_trees_from_gtf(
             (*gene_no as u32, *strand),
         )
     }
-    let mut res: Result<HashMap<String, _>> = trees
+    let res: Result<HashMap<String, _>> = trees
         .into_iter()
         .map(|(seq_name_cat_id, tree)| {
             let seq_name = gtf_entries.seqname.cat_from_value(seq_name_cat_id);
@@ -98,7 +96,7 @@ pub fn build_trees_from_gtf(
         })
         .collect();
 
-    Ok(res?)
+    res
 }
 
 #[derive(Debug)]

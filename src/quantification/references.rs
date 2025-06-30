@@ -34,14 +34,14 @@ impl Quant for Quantification {
                 let header = bam_with_index.header();
                 let reference_names = header.target_names();
                 let mut out_buffer = self.open_output(output)?;
-                for (tid, length, mapped_count, unmapped_count) in index_stats {
+                for (tid, _, mapped_count, unmapped_count) in index_stats {
                     if tid == -1 {
-                        out_buffer.write(format!("*\t{}\n", unmapped_count).as_bytes())?;
+                        out_buffer.write_all(format!("*\t{}\n", unmapped_count).as_bytes())?;
                     } else {
                         let reference_name =
                             std::str::from_utf8(reference_names[tid as usize]).unwrap_or("Unknown");
                         out_buffer
-                            .write(format!("{}\t{}\n", reference_name, mapped_count).as_bytes())?;
+                            .write_all(format!("{}\t{}\n", reference_name, mapped_count).as_bytes())?;
                     }
                 }
             }
@@ -69,9 +69,9 @@ impl Quant for Quantification {
                 for (reference_sequence_id, contig) in contigs.iter().enumerate() {
                     let count = counter.get(&reference_sequence_id).unwrap_or(&0);
                     let contig = std::str::from_utf8(contig).expect("Reference name wasn't utf-8");
-                    out_buffer.write(format!("{}\t{}\n", contig, count).as_bytes())?;
+                    out_buffer.write_all(format!("{}\t{}\n", contig, count).as_bytes())?;
                 }
-                out_buffer.write(format!("*\t{}\n", unmatched_count).as_bytes())?;
+                out_buffer.write_all(format!("*\t{}\n", unmatched_count).as_bytes())?;
             }
         }
         Ok(())

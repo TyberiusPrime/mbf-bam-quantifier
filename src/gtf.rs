@@ -31,13 +31,13 @@ impl GTFEntrys {
         }
     }
 
-    pub fn len(&self) -> usize {
+    /* pub fn len(&self) -> usize {
         self.start.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.start.is_empty()
-    }
+    } */
 }
 
 /// a helper that creates a vector, fills it with empty strings up to count
@@ -176,6 +176,5 @@ pub fn parse_ensembl_gtf(
         }
     }
 
-    let res: HashMap<String, GTFEntrys> = out.drain().collect();
-    Ok(res)
+    Ok(out)
 }

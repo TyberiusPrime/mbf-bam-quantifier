@@ -15,7 +15,6 @@ pub struct Config {
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
-
 pub struct Input {
     pub bam: String,
     pub gtf: Option<String>,
@@ -23,22 +22,21 @@ pub struct Input {
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
-
 pub struct Output {
     pub directory: String,
 }
 
 impl Config {
     pub fn check(&self) -> Result<()> {
-        self.quantification.check(&self)?;
+        self.quantification.check(self)?;
         Ok(())
     }
 }
 
 impl Input {
     pub fn get_bam_reader(&self) -> Result<rust_htslib::bam::Reader> {
-        Ok(rust_htslib::bam::Reader::from_path(&self.bam)
-            .with_context(|| format!("Failed to open bam file {} (without index)", &self.bam))?)
+        rust_htslib::bam::Reader::from_path(&self.bam)
+            .with_context(|| format!("Failed to open bam file {} (without index)", &self.bam))
     }
 
     pub fn get_indexed_bam_reader(&self) -> Result<rust_htslib::bam::IndexedReader> {
