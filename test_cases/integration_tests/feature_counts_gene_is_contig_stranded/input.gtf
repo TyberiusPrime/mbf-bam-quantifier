@@ -1,0 +1,10 @@
+# 1	ensembl_havana	contig	1211340	1214153	.	-	.	contig_id "ENSG00000186827"; contig_version "11"; contig_name "TNFRSF4"; contig_source "ensembl_havana"; contig_biotype "protein_coding";
+1	ignored	contig	1	248956422	.	.	.	contig_id "1."
+10	ignored	contig	1	133797422	.	.	.	contig_id "10."
+Y	ignored	contig	1	57227415	-	.	.	contig_id "Y."
+1	ignored	contig	1	248956422	.	+	.	contig_id "1+"
+10	ignored	contig	1	133797422	.	+	.	contig_id "10+"
+Y	ignored	contig	1	57227415	-	+	.	contig_id "Y+"
+1	ignored	contig	1	248956422	.	-	.	contig_id "1-"
+10	ignored	contig	1	133797422	.	-	.	contig_id "10-"
+Y	ignored	contig	1	57227415	-	-	.	contig_id "Y-"

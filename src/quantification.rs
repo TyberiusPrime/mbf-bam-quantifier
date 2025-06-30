@@ -1,6 +1,7 @@
 //mod featurecounts;
 mod chunked_genome;
 mod references;
+mod stranded;
 mod unstranded;
 
 use crate::config::{Config, Input, Output};
@@ -19,7 +20,7 @@ pub trait Quant {
     fn quantify(
         &mut self,
         input: &Input,
-        filters: &Vec<crate::filters::Filter>,
+        filters: &[crate::filters::Filter],
         output: &Output,
     ) -> anyhow::Result<()>;
     fn check(&self, _config: &Config) -> anyhow::Result<()> {
@@ -37,6 +38,9 @@ pub enum Quantification {
     FeatureCounts(featurecounts::Quantification), */
     #[serde(alias = "gtf_unstranded")]
     GTFUnstranded(unstranded::Quantification),
+
+    #[serde(alias = "gtf_stranded")]
+    GTFStranded(stranded::Quantification),
 }
 
 impl Quantification {}
@@ -137,7 +141,7 @@ where
         index_filename: Option<&Path>,
         interval_trees: &HashMap<String, (OurTree, Vec<String>)>,
         split_trees: HashMap<String, (OurTree, Vec<String>)>,
-        filters: &Vec<crate::filters::Filter>,
+        filters: &[crate::filters::Filter],
     ) -> Result<IntervalResult<Self::OutputType>> {
         //check whether the bam file can be openend
         //and we need it for the chunking
@@ -164,7 +168,7 @@ where
                             chunk.start,
                             chunk.stop,
                             gene_ids.len() as u32,
-                            &filters,
+                            filters,
                         )
                         .expect("Failure during read counting");
                     let result = local_result

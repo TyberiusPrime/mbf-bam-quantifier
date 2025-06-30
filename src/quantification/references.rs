@@ -28,7 +28,7 @@ impl Quant for Quantification {
     fn quantify(
         &mut self,
         input: &Input,
-        _filters: &Vec<crate::filters::Filter>,
+        _filters: &[crate::filters::Filter],
         output: &Output,
     ) -> anyhow::Result<()> {
         // Implement the quantification logic here
