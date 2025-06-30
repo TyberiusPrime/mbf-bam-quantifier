@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use rust_htslib::bam;
 use rust_htslib::bam::ext::BamRecordExtensions as htslib_record_extensions;
 use std::path::Path;
@@ -41,7 +41,7 @@ impl BamRecordExtensions for bam::Record {
 #[cfg(test)]
 mod tests {
     use crate::bam_ext::BamRecordExtensions;
-    use crate::rust_htslib::bam::Read;
+    use rust_htslib::bam::Read;
     use rust_htslib::bam;
 
     #[test]

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::Quant;
 use crate::config::{Input, Output};
-use anyhow::{bail, Result};
+use anyhow::bail;
 use rust_htslib::bam::{self, Read};
 use serde::{Deserialize, Serialize};
 use std::io::Write;

@@ -1,6 +1,6 @@
 use super::OurTree;
-use rust_htslib::bam::Read;
 use rust_htslib::bam;
+use rust_htslib::bam::Read;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::str;

@@ -1,5 +1,5 @@
-use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
+use std::collections::hash_map::Entry::{Occupied, Vacant};
 
 #[derive(Debug, Clone)]
 pub struct Categorical {
@@ -63,5 +63,34 @@ impl Categorical {
 
     pub fn len(&self) -> usize {
         self.values.len()
+    }
+}
+
+#[cfg(test)]
+mod test
+{
+    use super::*;
+    #[test]
+    fn test_cats() {
+        let mut cats = Categorical::new();
+        assert_eq!(cats.len(), 0);
+        cats.push("a");
+        assert_eq!(cats.len(), 1);
+        assert_eq!(cats.cat_from_value(0), "a");
+        assert_eq!(cats.cats.get("a"), Some(&0));
+        cats.push("b");
+        assert_eq!(cats.len(), 2);
+        assert_eq!(cats.cat_from_value(1), "b");
+        assert_eq!(cats.cats.get("b"), Some(&1));
+        cats.push("a");
+        assert_eq!(cats.len(), 3);
+        assert_eq!(cats.cat_from_value(0), "a");
+        assert_eq!(cats.cats.get("a"), Some(&0));
+        assert_eq!(cats.cats.get("b"), Some(&1));
+        cats.push("c");
+        assert_eq!(cats.len(), 4);
+        assert_eq!(cats.cat_from_value(2), "c");
+        assert_eq!(cats.cats.get("c"), Some(&2));
+        assert_eq!(cats.values, vec![0, 1, 0, 2]);
     }
 }

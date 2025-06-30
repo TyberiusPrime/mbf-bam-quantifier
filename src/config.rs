@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::io;
 use crate::quantification::{Quant, Quantification};
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
@@ -43,8 +42,7 @@ impl Input {
     }
 
     pub fn get_indexed_bam_reader(&self) -> Result<rust_htslib::bam::IndexedReader> {
-        Ok(rust_htslib::bam::IndexedReader::from_path(&self.bam)
-            .with_context(|| format!("Failed to open bam file {} (with index)", &self.bam))?)
+        crate::io::open_indexed_bam(&self.bam, None::<String>)
     }
 
     pub fn read_gtf(

@@ -7,6 +7,7 @@ use std::{
 
 use crate::categorical::Categorical;
 
+#[derive(Debug)]
 pub struct GTFEntrys {
     pub seqname: Categorical,
     pub start: Vec<u64>,
