@@ -25,7 +25,12 @@ impl Quantification {
 }
 
 impl Quant for Quantification {
-    fn quantify(&mut self, input: &Input, output: &Output) -> anyhow::Result<()> {
+    fn quantify(
+        &mut self,
+        input: &Input,
+        _filters: &Vec<crate::filters::Filter>,
+        output: &Output,
+    ) -> anyhow::Result<()> {
         // Implement the quantification logic here
         let bam_with_index = input.get_indexed_bam_reader();
         match bam_with_index {
@@ -40,8 +45,9 @@ impl Quant for Quantification {
                     } else {
                         let reference_name =
                             std::str::from_utf8(reference_names[tid as usize]).unwrap_or("Unknown");
-                        out_buffer
-                            .write_all(format!("{}\t{}\n", reference_name, mapped_count).as_bytes())?;
+                        out_buffer.write_all(
+                            format!("{}\t{}\n", reference_name, mapped_count).as_bytes(),
+                        )?;
                     }
                 }
             }

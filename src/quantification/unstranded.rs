@@ -1,8 +1,6 @@
 use super::{build_trees_from_gtf, IntervalCounter, IntervalResult, OurTree, Quant};
 use crate::{
-    bam_ext::BamRecordExtensions,
-    config::{Input, Output},
-    quantification::IntervalIntermediateResult,
+    bam_ext::BamRecordExtensions, config::{Input, Output}, filters::{Filter, ReadFilter}, quantification::IntervalIntermediateResult
 };
 use anyhow::{bail, Context, Result};
 use rust_htslib::bam::{self, Read};
@@ -39,17 +37,16 @@ impl Quantification {
         let output_file = ex::fs::File::create(&output_file)?;
         let mut out_buffer = std::io::BufWriter::new(output_file);
         out_buffer
-            .write_all(b"reference\tcount\n")
+            .write_all(format!("{}\tcount\n", self.id_attribute).as_bytes())
             .expect("Failed to write header to output file");
         Ok(out_buffer)
     }
 }
 
 impl Quant for Quantification {
-    fn quantify(&mut self, input: &Input, output: &Output) -> anyhow::Result<()> {
+    fn quantify(&mut self, input: &Input, filters: &Vec<Filter>, output: &Output) -> anyhow::Result<()> {
         let mut gtf_entrys =
             input.read_gtf(&[self.feature.as_str(), self.split_feature.as_str()])?;
-        dbg!(&gtf_entrys);
 
         let split_entries = gtf_entrys
                 .remove(self.split_feature.as_str())
@@ -68,8 +65,13 @@ impl Quant for Quantification {
             )
             .context("Failed to build feature trees")?
         };
-        let counts =
-            UnstrandedCounter::count(Path::new(&input.bam), None, &feature_trees, split_trees)?;
+        let counts = UnstrandedCounter::count(
+            Path::new(&input.bam),
+            None,
+            &feature_trees,
+            split_trees,
+            filters,
+        )?;
         let mut out_buffer = self.open_output(output)?;
 
         let sorted_keys = {
@@ -118,6 +120,7 @@ impl IntervalCounter for UnstrandedCounter {
         start: u32,
         stop: u32,
         gene_ids_len: u32, //how many are in the tree
+        filters: &[crate::filters::Filter],
     ) -> Result<IntervalIntermediateResult<Self::OutputType>> {
         let mut result = vec![0; gene_ids_len as usize];
         let mut gene_nos_seen = HashSet::<u32>::new();
@@ -125,8 +128,14 @@ impl IntervalCounter for UnstrandedCounter {
         let mut total_count = 0;
         let mut read: bam::Record = bam::Record::new();
         bam.fetch((tid, start as u64, stop as u64))?;
-        while let Some(bam_result) = bam.read(&mut read) {
+        'outer: while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
+            for f in filters.iter() {
+                if f.remove_read(&read) {
+                    // if the read does not pass the filter, skip it
+                    continue 'outer;
+                }
+            }
             // do not count multiple blocks matching in one gene multiple times
             gene_nos_seen.clear();
             let mut hit = false;

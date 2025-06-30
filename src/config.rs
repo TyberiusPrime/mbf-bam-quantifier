@@ -8,6 +8,8 @@ use crate::quantification::{Quant, Quantification};
 #[derive(Deserialize, Debug, Clone, Serialize)]
 pub struct Config {
     pub input: Input,
+    #[serde(default)]
+    pub filter: Vec<crate::filters::Filter>,
     #[serde(alias = "quant")]
     pub quantification: Quantification,
     pub output: Output,
@@ -25,6 +27,7 @@ pub struct Input {
 pub struct Output {
     pub directory: String,
 }
+
 
 impl Config {
     pub fn check(&self) -> Result<()> {

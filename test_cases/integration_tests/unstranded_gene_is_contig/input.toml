@@ -1,17 +1,13 @@
 # a basic reproduction of samtools idxstats
 [input]
 	bam = "input.bam"
-	gtf = "input.gtf"
-
-[[filter]]
-	mode = "multimapper"
-	action = "remove"
+	gtf = "input.gtf.gz"
 
 [quant]
    mode = "gtf_unstranded"
    feature = 'contig'
    id_attribute = 'contig_id'
-   split_feature = 'contig'
+	split_feature = 'contig'
    split_id_attribute = 'contig_id'
 
 

@@ -16,7 +16,12 @@ use std::path::Path;
 
 #[enum_dispatch(Quantification)]
 pub trait Quant {
-    fn quantify(&mut self, input: &Input, output: &Output) -> anyhow::Result<()>;
+    fn quantify(
+        &mut self,
+        input: &Input,
+        filters: &Vec<crate::filters::Filter>,
+        output: &Output,
+    ) -> anyhow::Result<()>;
     fn check(&self, _config: &Config) -> anyhow::Result<()> {
         Ok(())
     }
@@ -72,9 +77,7 @@ pub fn build_trees_from_gtf(
             genes_in_order.len() - 1
         });
 
-        let tree = trees
-            .entry(*seq_name_cat_id)
-            .or_default();
+        let tree = trees.entry(*seq_name_cat_id).or_default();
         let start: u32 = (*start)
             .try_into()
             .context("Start value is not a valid u64")?;
@@ -134,6 +137,7 @@ where
         index_filename: Option<&Path>,
         interval_trees: &HashMap<String, (OurTree, Vec<String>)>,
         split_trees: HashMap<String, (OurTree, Vec<String>)>,
+        filters: &Vec<crate::filters::Filter>,
     ) -> Result<IntervalResult<Self::OutputType>> {
         //check whether the bam file can be openend
         //and we need it for the chunking
@@ -160,6 +164,7 @@ where
                             chunk.start,
                             chunk.stop,
                             gene_ids.len() as u32,
+                            &filters,
                         )
                         .expect("Failure during read counting");
                     let result = local_result
@@ -188,6 +193,7 @@ where
         start: u32,
         stop: u32,
         gene_ids_len: u32, //how many are in the tree
+        filters: &[crate::filters::Filter],
     ) -> Result<IntervalIntermediateResult<Self::OutputType>>;
 
     fn aggregate(

@@ -4,6 +4,7 @@ use std::path::Path;
 mod bam_ext;
 mod categorical;
 mod config;
+mod filters;
 mod gtf;
 mod io;
 mod quantification;
@@ -20,7 +21,7 @@ pub fn run(toml_file: &Path) -> Result<()> {
 
     parsed
         .quantification
-        .quantify(&parsed.input, &parsed.output)
+        .quantify(&parsed.input, &parsed.filter, &parsed.output)
         .context("Error in quantification")?;
 
     Ok(())
