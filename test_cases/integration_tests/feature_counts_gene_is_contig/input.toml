@@ -1,19 +1,21 @@
 # a basic reproduction of samtools idxstats
 [input]
 	bam = "input.bam"
-	gtf = "input.gtf"
+[input.gtf]
+	filename = "input.gtf"
+    feature = 'contig'
+    id_attribute = 'contig_id'
+    aggr_feature = 'contig'
+    aggr_id_attribute = 'contig_id'
 
 [[filter]]
 	mode = "multimapper"
 	action = "remove"
 
 [quant]
-   mode = "gtf_unstranded"
-   feature = 'contig'
-   id_attribute = 'contig_id'
-   split_feature = 'contig'
-   split_id_attribute = 'contig_id'
+   mode = "unstranded_basic"
 
 
 [output]
 	directory = "output"
+	write_annotated_bam=true

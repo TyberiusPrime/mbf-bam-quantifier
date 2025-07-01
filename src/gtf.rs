@@ -1,8 +1,8 @@
 use crate::io::open_file;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::{
     collections::{HashMap, HashSet},
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader}, str::FromStr,
 };
 
 use crate::categorical::Categorical;
@@ -12,7 +12,7 @@ pub struct GTFEntrys {
     pub seqname: Categorical,
     pub start: Vec<u64>,
     pub end: Vec<u64>,
-    pub strand: Vec<i8>,
+    pub strand: Vec<Strand>,
     pub cat_attributes: HashMap<String, Categorical>,
     pub vec_attributes: HashMap<String, Vec<String>>,
     count: u32,
@@ -50,6 +50,47 @@ fn vector_new_empty_push(count: u32, value: String) -> Vec<String> {
     res
 }
 
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Strand {
+    Plus,
+    Minus,
+    Unstranded,
+}
+
+impl std::fmt::Display for Strand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Strand::Plus => write!(f, "+"),
+            Strand::Minus => write!(f, "-"),
+            Strand::Unstranded => write!(f, "-"),
+        }
+    }
+}
+
+impl FromStr for Strand {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "+" => Strand::Plus,
+            "-" => Strand::Minus,
+            "-" => Strand::Unstranded,
+            _ => bail!("Invalid strand value: {}", s),
+        })
+    }
+}
+
+impl Into<i8> for &Strand {
+    fn into(self) -> i8 {
+        match self {
+            Strand::Plus => 1,
+            Strand::Minus => -1,
+            Strand::Unstranded => 0,
+        }
+    }
+}
+
 pub fn parse_ensembl_gtf(
     filename: &str,
     accepted_features: HashSet<String>,
@@ -79,13 +120,7 @@ pub fn parse_ensembl_gtf(
         let end: u64 = parts.next().context("Failed to find start")?.parse()?;
         parts.next(); //consume score
         let strand = parts.next().context("Failed to find start")?;
-        let strand: i8 = if strand == "+" {
-            1
-        } else if strand == "-" {
-            -1
-        } else {
-            0
-        };
+        let strand: Strand = strand.parse().context("Failet do parse strand")?;
         let target = out.get_mut(feature).unwrap();
         target.seqname.push(seqname);
         target.start.push(start);

@@ -20,3 +20,4 @@ Session.vim
 .aider*
 tests/failures
 **/actual/**
+*bam.temp

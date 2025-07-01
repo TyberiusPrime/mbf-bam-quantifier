@@ -1,205 +1,171 @@
-//mod featurecounts;
-mod chunked_genome;
-mod references;
-mod stranded;
-mod unstranded;
+use std::{
+    collections::{HashMap, HashSet},
+    io::Write,
+    path::Path,
+};
 
-use crate::config::{Config, Input, Output};
-use crate::gtf::GTFEntrys;
-use anyhow::{Context, Result};
-use bio::data_structures::interval_tree::IntervalTree;
-use chunked_genome::{Chunk, ChunkedGenome};
+use anyhow::{bail, Context, Result};
 use enum_dispatch::enum_dispatch;
-use itertools::izip;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::collections::HashMap;
-use std::path::Path;
+
+use crate::{
+    config::{Config, Input, Output},
+    engine,
+    engine::IntervalResult,
+};
 
 #[enum_dispatch(Quantification)]
-pub trait Quant {
-    fn quantify(
-        &mut self,
-        input: &Input,
-        filters: &[crate::filters::Filter],
-        output: &Output,
-    ) -> anyhow::Result<()>;
+pub trait Quant: Send + Sync + Clone {
     fn check(&self, _config: &Config) -> anyhow::Result<()> {
         Ok(())
     }
+
+    fn output_only_one_column(&self) -> bool {
+        false
+    }
+
+    fn weight_read(
+        &mut self,
+        read: &rust_htslib::bam::record::Record,
+        gene_nos_seen_match: &HashSet<u32>,
+        gene_nos_seen_reverse: &HashSet<u32>,
+    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>);
 }
 
 #[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, serde::Serialize)]
 #[serde(tag = "mode")]
 #[enum_dispatch]
 pub enum Quantification {
-    #[serde(alias = "references")]
-    References(references::Quantification),
-    /* #[serde(alias = "featurecounts")]
-    FeatureCounts(featurecounts::Quantification), */
-    #[serde(alias = "gtf_unstranded")]
-    GTFUnstranded(unstranded::Quantification),
-
-    #[serde(alias = "gtf_stranded")]
-    GTFStranded(stranded::Quantification),
+    #[serde(alias = "unstranded_basic")]
+    UnstrandedBasic(UnstrandedBasic),
 }
 
-impl Quantification {}
+impl Quantification {
+    pub fn quantify(
+        &self,
+        input: &Input,
+        filters: Vec<crate::filters::Filter>,
+        output: &Output,
+    ) -> anyhow::Result<()> {
+        // Here you would implement the quantification logic
+        // For now, we just return Ok to indicate success
+        //
+        let gtf_entries = input.read_gtf()?;
+        let gtf_config = input.gtf.as_ref().context({
+            anyhow::anyhow!("GTF file is required for quantification, but none was provided.")
+        })?;
+        let mut sorted_output_keys = {
+            let entries = gtf_entries
+                .get(gtf_config.aggr_feature.as_str())
+                .with_context(|| {
+                    format!("No GTF entries found for feature {}", gtf_config.feature)
+                })?;
+            let mut keys: Vec<_> = entries
+                .vec_attributes
+                .get(gtf_config.aggr_id_attribute.as_str())
+                .context("No aggr_id_attribute found in GTF entries")?
+                .iter()
+                .cloned()
+                .collect();
+            keys.sort();
+            keys
+        };
 
-// OurTree stores an interval tree
-/// a gene_no (ie. an index into a vector of gene_ids)
-/// and the strand (+1/ -1, 0)
-pub type OurTree = IntervalTree<u32, (u32, i8)>;
+        let engine = crate::engine::Engine::from_gtf(
+            gtf_entries,
+            gtf_config.feature.as_str(),
+            gtf_config.id_attribute.as_str(),
+            gtf_config.aggr_feature.as_str(),
+            gtf_config.aggr_id_attribute.as_str(),
+            filters,
+            self.clone(),
+        )?;
 
-pub fn build_trees_from_gtf(
-    id_attribute: &str,
-    gtf_entries: GTFEntrys,
-) -> Result<HashMap<String, (OurTree, Vec<String>)>> {
-    let mut trees: HashMap<u32, OurTree> = HashMap::new();
-    let mut gene_nos_by_chr = HashMap::new();
-    for (seq_name_cat_id, gene_id, start, end, strand) in izip!(
-        gtf_entries.seqname.values.iter(),
-        gtf_entries
-            .vec_attributes
-            .get(id_attribute)
-            .context("Missing id attribute")?
-            .iter(),
-        gtf_entries.start.iter(),
-        gtf_entries.end.iter(),
-        gtf_entries.strand.iter(),
-    ) {
-        let (gene_nos, genes_in_order) = gene_nos_by_chr
-            .entry(*seq_name_cat_id)
-            .or_insert_with(|| (HashMap::new(), Vec::new()));
-        let gene_no = gene_nos.entry(gene_id).or_insert_with(|| {
-            genes_in_order.push(gene_id.clone());
-            genes_in_order.len() - 1
-        });
+        let counts = engine.quantify_bam(
+            &input.bam,
+            None,
+            &output.directory,
+            output.write_annotated_bam,
+        )?;
 
-        let tree = trees.entry(*seq_name_cat_id).or_default();
-        let start: u32 = (*start)
-            .try_into()
-            .context("Start value is not a valid u64")?;
-        let end: u32 = (*end).try_into().context("End value is not a valid u64")?;
-
-        tree.insert(
-            start..end, //these are already 0-based
-            (*gene_no as u32, *strand),
-        )
+        Self::write_output(
+            sorted_output_keys,
+            counts,
+            &output.directory.join("counts.tsv"),
+            gtf_config.aggr_id_attribute.as_str(),
+            self.output_only_one_column(),
+        )?;
+        Ok(())
     }
-    let res: Result<HashMap<String, _>> = trees
-        .into_iter()
-        .map(|(seq_name_cat_id, tree)| {
-            let seq_name = gtf_entries.seqname.cat_from_value(seq_name_cat_id);
-            let gene_nos = gene_nos_by_chr
-                .remove(&seq_name_cat_id)
-                .context("Missing gene numbers for sequence name")?;
-            Ok((seq_name, (tree, gene_nos.1)))
-        })
-        .collect();
 
-    res
-}
+    fn write_output(
+        sorted_keys: Vec<String>,
+        content: IntervalResult,
+        output_filename: &Path,
+        id_attribute: &str,
+        first_column_only: bool,
+    ) -> Result<()> {
+        ex::fs::create_dir_all(&output_filename.parent().unwrap())?;
 
-#[derive(Debug)]
-struct IntervalResult<T: std::marker::Send + std::marker::Sync + std::fmt::Debug> {
-    counts: HashMap<String, T>,
-    filtered: usize,
-    total: usize,
-    outside: usize,
-}
+        let output_file = ex::fs::File::create(&output_filename)?;
+        let mut out_buffer = std::io::BufWriter::new(output_file);
+        if first_column_only {
+            out_buffer
+                .write_all(format!("{}\tcount\n", id_attribute).as_bytes())
+                .context("Failed to write header to output file")?;
+            for key in sorted_keys {
+                let count = content.counts.get(&key).unwrap_or(&(0.0, 0.0)).0;
+                out_buffer
+                    .write_all(format!("{}\t{}\n", key, count).as_bytes())
+                    .context("Failed to write counts to output file")?;
+            }
+        } else {
+            out_buffer
+                .write_all(format!("{}\tcount_correct\tcount_reverse\n", id_attribute).as_bytes())
+                .context("Failed to write header to output file")?;
 
-impl<T: std::marker::Send + std::marker::Sync + std::fmt::Debug> IntervalResult<T> {
-    fn new() -> Self {
-        IntervalResult {
-            counts: HashMap::new(),
-            filtered: 0,
-            total: 0,
-            outside: 0,
+            for key in sorted_keys {
+                let (count_correct, count_reverse) =
+                    content.counts.get(&key).unwrap_or(&(0.0, 0.0));
+                out_buffer
+                    .write_all(
+                        format!("{}\t{}\t{}\n", key, count_correct, count_reverse).as_bytes(),
+                    )
+                    .context("Failed to write counts to output file")?;
+            }
         }
+
+        Ok(())
     }
 }
 
-#[derive(Debug)]
-struct IntervalIntermediateResult<T: std::marker::Send + std::marker::Sync + std::fmt::Debug> {
-    counts: Vec<T>,
-    filtered: usize,
-    total: usize,
-    outside: usize,
-}
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct UnstrandedBasic {}
 
-trait IntervalCounter
-where
-    Self::OutputType: std::marker::Send + std::marker::Sync + std::fmt::Debug,
-{
-    type OutputType;
-
-    fn count(
-        bam_filename: &Path,
-        index_filename: Option<&Path>,
-        interval_trees: &HashMap<String, (OurTree, Vec<String>)>,
-        split_trees: HashMap<String, (OurTree, Vec<String>)>,
-        filters: &[crate::filters::Filter],
-    ) -> Result<IntervalResult<Self::OutputType>> {
-        //check whether the bam file can be openend
-        //and we need it for the chunking
-        let bam = crate::io::open_indexed_bam(bam_filename, index_filename)?;
-
-        //perform the counting
-        let cg = ChunkedGenome::new(split_trees, bam); // can't get the ParallelBridge to work with our lifetimes.
-        let it: Vec<Chunk> = cg.iter().collect();
-        let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
-        let aggregated = pool.install(|| {
-            let result: IntervalResult<Self::OutputType> = it
-                .into_par_iter()
-                .map(|chunk| -> IntervalResult<Self::OutputType> {
-                    let mut bam =
-                        crate::io::open_indexed_bam(bam_filename, index_filename).unwrap();
-                    let (tree, gene_ids) = interval_trees.get(&chunk.chr).unwrap();
-
-                    let local_result: IntervalIntermediateResult<Self::OutputType> =
-                        Self::count_in_region(
-                            &mut bam,
-                            //&chunk.tree,
-                            tree,
-                            chunk.tid,
-                            chunk.start,
-                            chunk.stop,
-                            gene_ids.len() as u32,
-                            filters,
-                        )
-                        .expect("Failure during read counting");
-                    let result = local_result
-                        .counts
-                        .into_iter()
-                        .enumerate()
-                        .map(|(k, v)| (gene_ids[k].clone(), v))
-                        .collect::<HashMap<String, Self::OutputType>>();
-                    IntervalResult {
-                        counts: result,
-                        filtered: local_result.filtered,
-                        total: local_result.total,
-                        outside: local_result.outside,
-                    }
-                })
-                //todo: can we convert this into an error collector?
-                .reduce(IntervalResult::new, Self::aggregate);
-            Ok(result)
-        });
-        aggregated
+impl Quant for UnstrandedBasic {
+    fn check(&self, config: &Config) -> anyhow::Result<()> {
+        if config.input.gtf.is_none() {
+            bail!("UnstrandedBasic quantification requires a GTF file in the input configuration.");
+        }
+        Ok(())
     }
 
-    fn count_in_region(
-        bam: &mut rust_htslib::bam::IndexedReader,
-        tree: &OurTree,
-        tid: u32,
-        start: u32,
-        stop: u32,
-        gene_ids_len: u32, //how many are in the tree
-        filters: &[crate::filters::Filter],
-    ) -> Result<IntervalIntermediateResult<Self::OutputType>>;
+    fn output_only_one_column(&self) -> bool {
+        true
+    }
 
-    fn aggregate(
-        a: IntervalResult<Self::OutputType>,
-        b: IntervalResult<Self::OutputType>,
-    ) -> IntervalResult<Self::OutputType>;
+    fn weight_read(
+        &mut self,
+        read: &rust_htslib::bam::record::Record,
+        gene_nos_seen_match: &HashSet<u32>,
+        gene_nos_seen_reverse: &HashSet<u32>,
+    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
+        let mut res = Vec::new();
+        res.extend(gene_nos_seen_match.iter().map(|&id| (id, 1.0)));
+        for id in gene_nos_seen_reverse {
+            if !gene_nos_seen_match.contains(id) {
+                res.push((*id, 1.0));
+            }
+        }
+        (res, Vec::new())
+    }
 }

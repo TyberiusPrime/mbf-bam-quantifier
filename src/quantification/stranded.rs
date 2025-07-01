@@ -1,9 +1,6 @@
 use super::{build_trees_from_gtf, IntervalCounter, IntervalResult, OurTree, Quant};
 use crate::{
-    bam_ext::BamRecordExtensions,
-    config::{Input, Output},
-    filters::{Filter, ReadFilter},
-    quantification::IntervalIntermediateResult,
+    bam_ext::BamRecordExtensions, config::{Input, Output}, filters::{Filter, ReadFilter}, gtf::Strand, quantification::IntervalIntermediateResult
 };
 use anyhow::{bail, Context, Result};
 use rust_htslib::bam::{self, Read};
@@ -124,14 +121,14 @@ impl Quant for Quantification {
                         dbg!(strand, &self.direction, e.get());
                     }
                     match (strand, &self.direction) {
-                        (1, Direction::Forward) | (-1, Direction::Reverse) => {
+                        (Strand::Plus, Direction::Forward) | (Strand::Minus, Direction::Reverse) => {
                             // do nothing, counts are already in the right orientation
                         }
-                        (1, Direction::Reverse) | (-1, Direction::Forward) => {
+                        (Strand::Plus, Direction::Reverse) | (Strand::Minus, Direction::Forward) => {
                             let c = e.get_mut();
                             *c = (c.1, c.0); // swap forward and reverse counts
                         }
-                        (0, _) => {
+                        (Strand::Unstranded, _) => {
                             let c = e.get_mut();
                             *c = (c.0 + c.1, 0); // sum counts, set reverse to 0
                         }

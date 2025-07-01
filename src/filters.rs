@@ -9,7 +9,7 @@ enum KeepOrRemove {
 }
 
 #[enum_dispatch(Filter)]
-pub trait ReadFilter {
+pub trait ReadFilter: Send + Sync {
     fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool;
 }
 
