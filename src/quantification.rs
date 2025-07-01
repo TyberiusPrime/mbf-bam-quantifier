@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashSet},
-    io::Write,
-    path::Path,
-};
+use std::{collections::HashSet, io::Write, path::Path};
 
 use anyhow::{bail, Context, Result};
 use enum_dispatch::enum_dispatch;
@@ -36,6 +32,8 @@ pub trait Quant: Send + Sync + Clone {
 pub enum Quantification {
     #[serde(alias = "unstranded_basic")]
     UnstrandedBasic(UnstrandedBasic),
+    #[serde(alias = "stranded_basic")]
+    StrandedBasic(StrandedBasic),
 }
 
 impl Quantification {
@@ -167,5 +165,34 @@ impl Quant for UnstrandedBasic {
             }
         }
         (res, Vec::new())
+    }
+}
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct StrandedBasic {}
+
+impl Quant for StrandedBasic {
+    fn check(&self, config: &Config) -> anyhow::Result<()> {
+        if config.input.gtf.is_none() {
+            bail!("UnstrandedBasic quantification requires a GTF file in the input configuration.");
+        }
+        Ok(())
+    }
+
+    fn weight_read(
+        &mut self,
+        _read: &rust_htslib::bam::record::Record,
+        gene_nos_seen_match: &HashSet<u32>,
+        gene_nos_seen_reverse: &HashSet<u32>,
+    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
+        (
+            gene_nos_seen_match
+                .iter()
+                .map(|&id| (id, 1.0))
+                .collect::<Vec<_>>(),
+            gene_nos_seen_reverse
+                .iter()
+                .map(|&id| (id, 1.0))
+                .collect::<Vec<_>>(),
+        )
     }
 }

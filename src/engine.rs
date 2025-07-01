@@ -255,11 +255,15 @@ impl Engine {
                         hit = true;
                         let entry = r.data();
                         let gene_no = entry.0;
-                        if read.is_reverse() {
-                            gene_nos_seen_reverse.insert(gene_no);
-                        } else {
-                            gene_nos_seen_match.insert(gene_no);
-                        }
+                        let strand = entry.1;
+                        let target = match (read.is_reverse(), strand) {
+                            (_, Strand::Unstranded) => &mut gene_nos_seen_match,
+                            (false, Strand::Plus) => &mut gene_nos_seen_match,
+                            (false, Strand::Minus) => &mut gene_nos_seen_reverse,
+                            (true, Strand::Plus) => &mut gene_nos_seen_reverse,
+                            (true, Strand::Minus) => &mut gene_nos_seen_match,
+                        };
+                        target.insert(gene_no);
                     }
                 }
             }
