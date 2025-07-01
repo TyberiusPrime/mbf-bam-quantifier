@@ -1,1 +1,0 @@
-GTF file is not required for contig quantification, do net set it

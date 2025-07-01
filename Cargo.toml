@@ -31,6 +31,8 @@ serde_valid = "1.0.5"
 strum_macros = "0.27.1"
 tempfile = "3.20.0"
 toml = "0.8.23"
+noodles-gff = "0.50.0"
+noodles-gtf = "0.45.0"
 
 [[bin]]
 name = "mbf-bam-quantifier-test-runner"

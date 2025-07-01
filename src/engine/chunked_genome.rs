@@ -80,7 +80,7 @@ impl Chunk {
 impl Iterator for ChunkedGenomeIterator<'_> {
     type Item = Chunk;
     fn next(&mut self) -> Option<Chunk> {
-        let chunk_size = 1_000_000;
+        let chunk_size = 10_000_000;
         if self.last_start >= self.last_chr_length {
             let next_chr = self.it.next()?;
             let tid = self.cg.bam.header().tid(next_chr.as_bytes()).unwrap();

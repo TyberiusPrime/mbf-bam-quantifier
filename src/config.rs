@@ -95,12 +95,28 @@ impl Input {
     ) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
         if let Source::GTF(gtf_config) = &self.source {
             let accepted_features = vec![&gtf_config.feature, &gtf_config.aggr_feature];
-            let mut parsed = crate::gtf::parse_ensembl_gtf(
+            let mut accepted_tags: HashSet<String> = vec![
+                gtf_config.id_attribute.to_string(),
+                gtf_config.aggr_id_attribute.to_string(),
+                duplication_detection_id_attribute.to_string(),
+            ]
+            .into_iter()
+            .collect();
+
+            /* let mut parsed = crate::gtf::parse_ensembl_gtf(
                 &gtf_config.filename,
                 accepted_features
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<HashSet<_>>(),
+            )?; */
+            let mut parsed = crate::gtf::parse_noodles_gtf(
+                &gtf_config.filename,
+                accepted_features
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<HashSet<_>>(),
+                accepted_tags,
             )?;
             // gtfs tend to have repeated exons, when transcripts contain the same ones.
             // we filter those by default. But the way featureCounts does it
@@ -112,9 +128,6 @@ impl Input {
                     for (_, entries) in parsed.iter_mut() {
                         let mut keep = vec![true; entries.seqname.len()];
                         let mut seen = HashSet::new();
-                        dbg!(entries
-                            .vec_attributes
-                            .get(duplication_detection_id_attribute));
                         for (ii, (start, stop, id)) in izip!(
                             &entries.start,
                             &entries.end,
@@ -140,9 +153,6 @@ impl Input {
                 DuplicateHandling::Rename => {
                     for (_, entries) in parsed.iter_mut() {
                         let mut counter = HashMap::new();
-                        dbg!(entries
-                            .vec_attributes
-                            .get(duplication_detection_id_attribute));
                         for (ii, (start, stop, id)) in izip!(
                             &entries.start,
                             &entries.end,

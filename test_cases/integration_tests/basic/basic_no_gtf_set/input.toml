@@ -1,0 +1,10 @@
+# a basic reproduction of samtools idxstats
+[input]
+	bam = "input.bam"
+
+[quant]
+   mode = "unstranded_basic"
+
+
+[output]
+	directory = "output"

@@ -1,5 +1,6 @@
 use crate::io::open_file;
 use anyhow::{bail, Context, Result};
+use noodles_gff::feature::record::Attributes;
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader},
@@ -113,6 +114,95 @@ impl Into<i8> for &Strand {
             Strand::Unstranded => 0,
         }
     }
+}
+
+pub fn parse_noodles_gtf(
+    filename: &str,
+    accepted_features: HashSet<String>,
+    accepted_tags: HashSet<String>,
+) -> Result<HashMap<String, GTFEntrys>> {
+    let f = BufReader::new(open_file(filename)?);
+    let mut reader = noodles_gtf::io::Reader::new(f);
+    let mut out: HashMap<String, GTFEntrys> = HashMap::new();
+
+    for result in reader.record_bufs() {
+        let record = result?;
+
+        let feature = std::str::from_utf8(record.ty()).unwrap();
+        if !out.contains_key(feature) {
+            if (!accepted_features.is_empty()) && (!accepted_features.contains(feature)) {
+                continue;
+            }
+            let hm: GTFEntrys = GTFEntrys::new();
+            out.insert(feature.to_string(), hm);
+        }
+        let target = out.get_mut(feature).unwrap();
+        target
+            .seqname
+            .push(std::str::from_utf8(record.reference_sequence_name()).unwrap());
+        target.start.push(record.start().get() as u64 - 1);
+        target.end.push(record.end().get() as u64);
+        target.strand.push(match record.strand() {
+            noodles_gff::feature::record::Strand::Forward => Strand::Plus,
+            noodles_gff::feature::record::Strand::Reverse => Strand::Minus,
+            _ => Strand::Unstranded,
+        });
+
+        for res in record.attributes().iter() {
+            let (key, value) = res?;
+            let key = std::str::from_utf8(&key).context("Failed to parse key")?;
+            if !accepted_tags.contains(key) {
+                continue;
+            }
+            /* if (key.starts_with("gene") & (key != "gene_id") & (feature != "gene"))
+                | (key.starts_with("transcript")
+                    & (key != "transcript_id")
+                    & (feature != "transcript"))
+            {
+                continue;
+            } */
+            let str_value = match &value {
+                noodles_gff::feature::record::attributes::field::Value::String(value) => {
+                    std::str::from_utf8(value).context("Failed to parse value")?
+                }
+                noodles_gff::feature::record::attributes::field::Value::Array(_) => continue,
+            };
+
+            if key.ends_with("_id") {
+                // vec vs categorical seems to be almost performance neutral
+                //just this push here (and I guess the fill-er-up below
+                //takes about 3 seconds.
+                target
+                    .vec_attributes
+                    .get_mut(key)
+                    .map(|at| {
+                        at.push(str_value.to_string());
+                    })
+                    .unwrap_or_else(|| {
+                        target.vec_attributes.insert(
+                            key.to_string(),
+                            vector_new_empty_push(target.count, str_value.to_string()),
+                        );
+                    });
+            } else {
+                // these tributes take about 1.5s to store (nd fill-er-up)
+                target
+                    .cat_attributes
+                    .get_mut(key)
+                    .map(|at| {
+                        at.push(str_value);
+                    })
+                    .unwrap_or_else(|| {
+                        target.cat_attributes.insert(
+                            key.to_string(),
+                            Categorical::new_empty_push(target.count, str_value),
+                        );
+                    });
+            }
+        }
+    }
+
+    Ok(out)
 }
 
 pub fn parse_ensembl_gtf(

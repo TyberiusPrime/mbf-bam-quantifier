@@ -1,6 +1,3 @@
-- feature count test - gene level
-- feature count test - exon level
-
 - smart exon tag counting like we do...
 
 - star solo comparison tests
