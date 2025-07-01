@@ -1,6 +1,9 @@
-use std::{collections::{HashMap, HashSet}, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::quantification::{Quant, Quantification};
@@ -19,7 +22,7 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct Input {
     pub bam: String,
-    pub gtf: Option<GTFConfig>,
+    pub source: Source,
 }
 
 fn default_aggr_feature() -> String {
@@ -28,6 +31,16 @@ fn default_aggr_feature() -> String {
 
 fn default_aggr_id_attribute() -> String {
     "gene_id".to_string()
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+#[serde(tag = "type")]
+pub enum Source {
+    #[serde(alias = "gtf")]
+    GTF(GTFConfig),
+    #[serde(alias = "bam_references")]
+    BamReferences,
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
@@ -58,20 +71,19 @@ impl Config {
 }
 
 impl Input {
-
     pub fn read_gtf(&self) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
-        let gtf_config = &self
-            .gtf
-            .as_ref()
-            .context("No GTF defined in input, but required")?;
-        let accepted_features = vec![&gtf_config.feature, &gtf_config.aggr_feature];
-        crate::gtf::parse_ensembl_gtf(
-            &gtf_config.filename,
-            accepted_features
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<HashSet<_>>(),
-        )
+        if let Source::GTF(gtf_config) = &self.source {
+            let accepted_features = vec![&gtf_config.feature, &gtf_config.aggr_feature];
+            crate::gtf::parse_ensembl_gtf(
+                &gtf_config.filename,
+                accepted_features
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<HashSet<_>>(),
+            )
+        } else {
+            bail!("Input source is not GTF, cannot read GTF entries");
+        }
     }
     /* reader.read_header()?;
     for result in reader.records() {

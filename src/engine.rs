@@ -125,6 +125,36 @@ impl Engine {
             quantifier,
         })
     }
+    pub fn from_references(
+        references: Vec<(String, u64)>,
+        filters: Vec<crate::filters::Filter>,
+        quantifier: Quantification,
+    ) -> Result<Self> {
+{
+        let mut trees: HashMap<String, (OurTree, Vec<String>)> = HashMap::new();
+        for( seq_name, length) in references.iter() {
+                let mut tree = OurTree::new();
+                let start = 0;
+                let stop = *length as u32;
+                tree.insert(
+                    start..stop, //these are already 0-based
+                    (0, Strand::Unstranded), // no gene numbers here, just a dummy
+                );
+                let genes_in_order = vec![seq_name.clone()];
+                trees.insert(seq_name.clone(), (tree, genes_in_order));
+            }
+
+        Ok(Engine {
+            reference_to_count_trees: trees.clone(),
+            reference_to_aggregation_trees: trees,
+            filters,
+            quantifier,
+        })
+
+}
+
+    }
+     
 
     pub fn quantify_bam(
         &self,
@@ -226,6 +256,7 @@ impl Engine {
                 writer
             });
         let mut quant = self.quantifier.clone();
+        let reverse = self.quantifier.reverse();
         bam.fetch((tid, start as u64, stop as u64))?;
         'outer: while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
@@ -256,12 +287,17 @@ impl Engine {
                         let entry = r.data();
                         let gene_no = entry.0;
                         let strand = entry.1;
-                        let target = match (read.is_reverse(), strand) {
-                            (_, Strand::Unstranded) => &mut gene_nos_seen_match,
-                            (false, Strand::Plus) => &mut gene_nos_seen_match,
-                            (false, Strand::Minus) => &mut gene_nos_seen_reverse,
-                            (true, Strand::Plus) => &mut gene_nos_seen_reverse,
-                            (true, Strand::Minus) => &mut gene_nos_seen_match,
+                        let target = match (reverse, read.is_reverse(), strand) {
+                            (_, _, Strand::Unstranded) => &mut gene_nos_seen_match,
+                            (false, false, Strand::Plus) => &mut gene_nos_seen_match,
+                            (false, false, Strand::Minus) => &mut gene_nos_seen_reverse,
+                            (false, true, Strand::Plus) => &mut gene_nos_seen_reverse,
+                            (false, true, Strand::Minus) => &mut gene_nos_seen_match,
+
+                            (true, false, Strand::Plus) => &mut gene_nos_seen_reverse,
+                            (true, false, Strand::Minus) => &mut gene_nos_seen_match,
+                            (true, true, Strand::Plus) => &mut gene_nos_seen_match,
+                            (true, true, Strand::Minus) => &mut gene_nos_seen_reverse,
                         };
                         target.insert(gene_no);
                     }

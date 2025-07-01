@@ -1,22 +1,25 @@
 # a basic reproduction of samtools idxstats
 [input]
-	bam = "input.bam"
-	gtf = "input.gtf.gz"
+    bam = "input.bam"
+
+[input.source]
+   type ="gtf"
+   filename = "input.gtf.gz"
+   feature = 'exon'
+   id_attribute = 'exon_id'
+   aggr_feature = 'exon'
+   aggr_id_attribute = 'exon_id'
 
 
 [[filter]]
-	mode = "multimapper"
-	action = "remove"
+    mode = "multimapper"
+    action = "remove"
 
 
 [quant]
-   mode = "gtf_stranded"
-   feature = 'exon'
-   id_attribute = 'exon_id'
-   split_feature = 'exon'
-   split_id_attribute = 'exon_id'
+   mode = "stranded_featurecounts"
    direction = 'Forward'
 
-
 [output]
-	directory = 'output'
+    directory = 'output'
+    write_annotated_bam = true

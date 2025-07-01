@@ -1,12 +1,14 @@
 use std::{collections::HashSet, io::Write, path::Path};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use enum_dispatch::enum_dispatch;
+use rust_htslib::bam::Read;
 
 use crate::{
     config::{Config, Input, Output},
     engine::IntervalResult,
 };
+use serde::{Deserialize, Serialize};
 
 #[enum_dispatch(Quantification)]
 pub trait Quant: Send + Sync + Clone {
@@ -24,6 +26,11 @@ pub trait Quant: Send + Sync + Clone {
         gene_nos_seen_match: &HashSet<u32>,
         gene_nos_seen_reverse: &HashSet<u32>,
     ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>);
+
+    /// whether forward /reverse matches should be swapped
+    fn reverse(&self) -> bool {
+        false
+    }
 }
 
 #[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, serde::Serialize)]
@@ -46,36 +53,69 @@ impl Quantification {
         // Here you would implement the quantification logic
         // For now, we just return Ok to indicate success
         //
-        let gtf_entries = input.read_gtf()?;
-        let gtf_config = input.gtf.as_ref().context({
-            anyhow::anyhow!("GTF file is required for quantification, but none was provided.")
-        })?;
-        let sorted_output_keys = {
-            let entries = gtf_entries
-                .get(gtf_config.aggr_feature.as_str())
-                .with_context(|| {
-                    format!("No GTF entries found for feature {}", gtf_config.feature)
-                })?;
-            let mut keys: Vec<_> = entries
-                .vec_attributes
-                .get(gtf_config.aggr_id_attribute.as_str())
-                .context("No aggr_id_attribute found in GTF entries")?
-                .iter()
-                .cloned()
-                .collect();
-            keys.sort();
-            keys
-        };
+        let (engine, sorted_output_keys, output_title) = match input.source {
+            crate::config::Source::GTF(ref gtf_config) => {
+                let gtf_entries = input.read_gtf()?;
+                let sorted_output_keys = {
+                    let entries = gtf_entries
+                        .get(gtf_config.aggr_feature.as_str())
+                        .with_context(|| {
+                            format!("No GTF entries found for feature {}", gtf_config.feature)
+                        })?;
+                    let mut keys: Vec<_> = entries
+                        .vec_attributes
+                        .get(gtf_config.aggr_id_attribute.as_str())
+                        .context("No aggr_id_attribute found in GTF entries")?
+                        .iter()
+                        .cloned()
+                        .collect();
+                    keys.sort();
+                    keys
+                };
 
-        let engine = crate::engine::Engine::from_gtf(
-            gtf_entries,
-            gtf_config.feature.as_str(),
-            gtf_config.id_attribute.as_str(),
-            gtf_config.aggr_feature.as_str(),
-            gtf_config.aggr_id_attribute.as_str(),
-            filters,
-            self.clone(),
-        )?;
+                (
+                    crate::engine::Engine::from_gtf(
+                        gtf_entries,
+                        gtf_config.feature.as_str(),
+                        gtf_config.id_attribute.as_str(),
+                        gtf_config.aggr_feature.as_str(),
+                        gtf_config.aggr_id_attribute.as_str(),
+                        filters,
+                        self.clone(),
+                    )?,
+                    sorted_output_keys,
+                    gtf_config.aggr_id_attribute.as_str(),
+                )
+            }
+            crate::config::Source::BamReferences => {
+                let bam = rust_htslib::bam::Reader::from_path(input.bam.as_str())
+                    .context("Failed to open BAM file")?;
+                let header = bam.header();
+                let references: Result<Vec<(String, u64)>> = header
+                    .target_names()
+                    .iter()
+                    .enumerate()
+                    .map(|(tid, name)| {
+                        Ok((
+                            std::str::from_utf8(name)
+                                .context("reference name was'nt utf8")?
+                                .to_string(),
+                            header
+                                .target_len(tid as u32)
+                                .context("No length for tid?!")?,
+                        ))
+                    })
+                    .collect();
+                let references = references?;
+                let sorted_output_keys: Vec<String> =
+                    references.iter().map(|(name, _)| name.clone()).collect();
+                (
+                    crate::engine::Engine::from_references(references, filters, self.clone())?,
+                    sorted_output_keys,
+                    "reference",
+                )
+            }
+        };
 
         let counts = engine.quantify_bam(
             &input.bam,
@@ -88,7 +128,7 @@ impl Quantification {
             sorted_output_keys,
             counts,
             &output.directory.join("counts.tsv"),
-            gtf_config.aggr_id_attribute.as_str(),
+            output_title,
             self.output_only_one_column(),
         )?;
 
@@ -136,17 +176,13 @@ impl Quantification {
     }
 }
 
+/// count every read that matches. That means a read can count for multiple
+/// regions
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct UnstrandedBasic {}
 
 impl Quant for UnstrandedBasic {
-    fn check(&self, config: &Config) -> anyhow::Result<()> {
-        if config.input.gtf.is_none() {
-            bail!("UnstrandedBasic quantification requires a GTF file in the input configuration.");
-        }
-        Ok(())
-    }
-
     fn output_only_one_column(&self) -> bool {
         true
     }
@@ -167,15 +203,29 @@ impl Quant for UnstrandedBasic {
         (res, Vec::new())
     }
 }
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+enum Direction {
+    #[serde(alias = "forward")]
+    Forward,
+    #[serde(alias = "reverse")]
+    Reverse,
+}
+
+/// count every read that matches. That means a read can count for multiple
+/// regions. Considers strandedness.
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
-pub struct StrandedBasic {}
+#[serde(deny_unknown_fields)]
+pub struct StrandedBasic {
+    direction: Direction,
+}
 
 impl Quant for StrandedBasic {
-    fn check(&self, config: &Config) -> anyhow::Result<()> {
-        if config.input.gtf.is_none() {
-            bail!("UnstrandedBasic quantification requires a GTF file in the input configuration.");
+    fn reverse(&self) -> bool {
+        match self.direction {
+            Direction::Forward => false,
+            Direction::Reverse => true,
         }
-        Ok(())
     }
 
     fn weight_read(

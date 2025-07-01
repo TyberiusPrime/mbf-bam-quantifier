@@ -1,10 +1,12 @@
 # a basic reproduction of samtools idxstats
 [input]
 	bam = "input.bam"
-	# gtf = input.gtf
+
+[input.source]
+	type = "bam_references"
 
 [quantification]
-   mode = "references"
+   mode = "unstranded_basic"
 
 
 [output]
