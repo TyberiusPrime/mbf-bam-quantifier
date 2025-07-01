@@ -432,10 +432,13 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
         !relative_path.starts_with("input")
     })?;
 
-    let missing_files = dir_diff(
-        relative(&expected_files),
-        relative(&output_files_in_temp_dir),
-    )?;
+    let missing_files = filter_files(
+        dir_diff(
+            relative(&expected_files),
+            relative(&output_files_in_temp_dir),
+        )?,
+        |filename| !(filename.starts_with("compare_") || filename.contains("/compare_")),
+    );
     let unexpected_files = dir_diff(
         relative(&output_files_in_temp_dir),
         relative(&expected_files),
@@ -532,8 +535,13 @@ fn files_equal(file_a: PathBuf, file_b: PathBuf) -> Result<bool> {
         if output.status.success() {
             return Ok(true);
         } else {
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Comparison script failed with error: {}", stderr.trim());
+            bail!(
+                "Comparison script failed with stdout: {} error: {}",
+                stdout.trim(),
+                stderr.trim()
+            );
         }
     }
     Ok(false)
@@ -553,6 +561,11 @@ fn setup_test_environment(input_files: Vec<(PathBuf, String)>) -> Result<TempDir
     copy_files(&input_files, temp_dir.path()).context("Copy input files to temp dir")?;
 
     Ok(temp_dir)
+}
+
+fn filter_files(files: Vec<String>, filter: impl Fn(&str) -> bool) -> Vec<String> {
+    let filtered: Vec<String> = files.into_iter().filter(|f| filter(f)).collect();
+    filtered
 }
 
 fn dir_diff(files_a: Vec<String>, files_b: Vec<String>) -> Result<Vec<String>> {

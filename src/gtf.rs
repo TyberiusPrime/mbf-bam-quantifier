@@ -2,7 +2,8 @@ use crate::io::open_file;
 use anyhow::{bail, Context, Result};
 use std::{
     collections::{HashMap, HashSet},
-    io::{BufRead, BufReader}, str::FromStr,
+    io::{BufRead, BufReader},
+    str::FromStr,
 };
 
 use crate::categorical::Categorical;
@@ -28,6 +29,29 @@ impl GTFEntrys {
             cat_attributes: HashMap::new(),
             vec_attributes: HashMap::new(),
             count: 0,
+        }
+    }
+
+    pub fn filter(&mut self, keep: &[bool]) {
+        let mut iter = keep.iter();
+        self.seqname.values.retain(|_| *iter.next().unwrap());
+
+        let mut iter = keep.iter();
+        self.start.retain(|_| *iter.next().unwrap());
+
+        let mut iter = keep.iter();
+        self.end.retain(|_| *iter.next().unwrap());
+
+        let mut iter = keep.iter();
+        self.strand.retain(|_| *iter.next().unwrap());
+
+        for values in self.cat_attributes.values_mut() {
+            let mut iter = keep.iter();
+            values.values.retain(|_| *iter.next().unwrap());
+        }
+        for values in self.vec_attributes.values_mut() {
+            let mut iter = keep.iter();
+            values.retain(|_| *iter.next().unwrap());
         }
     }
 

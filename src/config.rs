@@ -1,9 +1,10 @@
+use itertools::izip;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::quantification::{Quant, Quantification};
@@ -43,6 +44,20 @@ pub enum Source {
     BamReferences,
 }
 
+#[derive(Deserialize, Debug, Clone, Serialize, Copy)]
+pub enum DuplicateHandling {
+    #[serde(alias = "collapse")]
+    Collapse,
+    #[serde(alias = "rename")]
+    Rename,
+}
+
+impl Default for DuplicateHandling {
+    fn default() -> Self {
+        DuplicateHandling::Collapse
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GTFConfig {
@@ -53,6 +68,8 @@ pub struct GTFConfig {
     pub aggr_feature: String,
     #[serde(default = "default_aggr_id_attribute")]
     pub aggr_id_attribute: String,
+    #[serde(default)]
+    pub duplicate_handling: DuplicateHandling,
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
@@ -71,16 +88,86 @@ impl Config {
 }
 
 impl Input {
-    pub fn read_gtf(&self) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
+    pub fn read_gtf(
+        &self,
+        collapse_or_rename_duplicates: crate::config::DuplicateHandling,
+        duplication_detection_id_attribute: &str,
+    ) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
         if let Source::GTF(gtf_config) = &self.source {
             let accepted_features = vec![&gtf_config.feature, &gtf_config.aggr_feature];
-            crate::gtf::parse_ensembl_gtf(
+            let mut parsed = crate::gtf::parse_ensembl_gtf(
                 &gtf_config.filename,
                 accepted_features
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<HashSet<_>>(),
-            )
+            )?;
+            // gtfs tend to have repeated exons, when transcripts contain the same ones.
+            // we filter those by default. But the way featureCounts does it
+            // is to keep them, and then discard all their reads.
+            // so for featureCount parity, we need to rename themj
+
+            match collapse_or_rename_duplicates {
+                DuplicateHandling::Collapse => {
+                    for (_, entries) in parsed.iter_mut() {
+                        let mut keep = vec![true; entries.seqname.len()];
+                        let mut seen = HashSet::new();
+                        dbg!(entries
+                            .vec_attributes
+                            .get(duplication_detection_id_attribute));
+                        for (ii, (start, stop, id)) in izip!(
+                            &entries.start,
+                            &entries.end,
+                            entries
+                                .vec_attributes
+                                .get(duplication_detection_id_attribute)
+                                .with_context(|| format!(
+                                    "Attribute not found {duplication_detection_id_attribute}"
+                                ))?
+                        )
+                        .enumerate()
+                        {
+                            let key = (*start, *stop, id);
+                            if seen.contains(&key) {
+                                keep[ii] = false;
+                                continue;
+                            }
+                            seen.insert(key);
+                        }
+                        entries.filter(&keep);
+                    }
+                }
+                DuplicateHandling::Rename => {
+                    for (_, entries) in parsed.iter_mut() {
+                        let mut counter = HashMap::new();
+                        dbg!(entries
+                            .vec_attributes
+                            .get(duplication_detection_id_attribute));
+                        for (ii, (start, stop, id)) in izip!(
+                            &entries.start,
+                            &entries.end,
+                            entries
+                                .vec_attributes
+                                .get_mut(duplication_detection_id_attribute)
+                                .with_context(|| format!(
+                                    "Attribute not found {duplication_detection_id_attribute}"
+                                ))?
+                        )
+                        .enumerate()
+                        {
+                            let key = (*start, *stop, id.clone());
+                            if counter.contains_key(&key) {
+                                *id = format!("{}-{}", id, ii);
+                                continue;
+                            }
+                            counter.entry(key).and_modify(|c| *c += 1).or_insert(1);
+                        }
+                        //entries.filter(&keep);
+                    }
+                }
+            }
+
+            Ok(parsed)
         } else {
             bail!("Input source is not GTF, cannot read GTF entries");
         }

@@ -1,0 +1,24 @@
+[input]
+    bam = "input.bam"
+
+[input.source]
+   type ="gtf"
+   filename = "input.gtf.gz"
+   feature = 'exon'
+   id_attribute = 'exon_id'
+   aggr_feature = 'exon'
+   aggr_id_attribute = 'exon_id'
+   duplicate_handling= 'rename'
+
+
+[[filter]]
+    mode = "multimapper"
+    action = "remove"
+
+
+[quant]
+   mode = "unstranded_featurecounts"
+
+[output]
+    directory = 'output'
+    write_annotated_bam = false
