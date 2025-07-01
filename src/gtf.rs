@@ -63,7 +63,7 @@ impl std::fmt::Display for Strand {
         match self {
             Strand::Plus => write!(f, "+"),
             Strand::Minus => write!(f, "-"),
-            Strand::Unstranded => write!(f, "-"),
+            Strand::Unstranded => write!(f, "."),
         }
     }
 }
@@ -75,7 +75,7 @@ impl FromStr for Strand {
         Ok(match s {
             "+" => Strand::Plus,
             "-" => Strand::Minus,
-            "-" => Strand::Unstranded,
+            "." => Strand::Unstranded,
             _ => bail!("Invalid strand value: {}", s),
         })
     }

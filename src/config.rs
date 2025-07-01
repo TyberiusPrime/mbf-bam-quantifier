@@ -58,14 +58,6 @@ impl Config {
 }
 
 impl Input {
-    pub fn get_bam_reader(&self) -> Result<rust_htslib::bam::Reader> {
-        rust_htslib::bam::Reader::from_path(&self.bam)
-            .with_context(|| format!("Failed to open bam file {} (without index)", &self.bam))
-    }
-
-    pub fn get_indexed_bam_reader(&self) -> Result<rust_htslib::bam::IndexedReader> {
-        crate::io::open_indexed_bam(&self.bam, None::<String>)
-    }
 
     pub fn read_gtf(&self) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
         let gtf_config = &self

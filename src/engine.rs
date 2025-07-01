@@ -172,7 +172,7 @@ impl Engine {
                     let mut bam =
                         crate::io::open_indexed_bam(bam_filename, index_filename).unwrap();
                     let (tree, gene_ids) = self.reference_to_count_trees.get(&chunk.chr).unwrap();
-                    let mut counts = self.quantify_in_region(
+                    let counts = self.quantify_in_region(
                         &mut bam,
                         tree,
                         &gene_ids,
@@ -324,9 +324,9 @@ impl Engine {
                 .enumerate()
                 .map(|(idx, id)| (id.clone(), result[idx]))
                 .collect(),
-            filtered: 0,
-            total: 0,
-            outside: 0,
+            filtered: filtered_count,
+            total: total_count,
+            outside: outside_count,
         })
     }
 
@@ -437,7 +437,8 @@ impl Engine {
             None,
             rust_htslib::bam::index::Type::Bai,
             0,
-        ).context("Failed to build BAM index")?;
+        )
+        .context("Failed to build BAM index")?;
         //remove the temporary directory
         ex::fs::remove_dir_all(&temp_dir).with_context(|| {
             format!(
@@ -459,4 +460,3 @@ fn add_dual_hashmaps(
     }
     a
 }
-trait Quantifier {}

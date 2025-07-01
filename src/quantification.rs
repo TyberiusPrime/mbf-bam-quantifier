@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashSet},
     io::Write,
     path::Path,
 };
@@ -9,7 +9,6 @@ use enum_dispatch::enum_dispatch;
 
 use crate::{
     config::{Config, Input, Output},
-    engine,
     engine::IntervalResult,
 };
 
@@ -53,7 +52,7 @@ impl Quantification {
         let gtf_config = input.gtf.as_ref().context({
             anyhow::anyhow!("GTF file is required for quantification, but none was provided.")
         })?;
-        let mut sorted_output_keys = {
+        let sorted_output_keys = {
             let entries = gtf_entries
                 .get(gtf_config.aggr_feature.as_str())
                 .with_context(|| {
@@ -94,6 +93,7 @@ impl Quantification {
             gtf_config.aggr_id_attribute.as_str(),
             self.output_only_one_column(),
         )?;
+
         Ok(())
     }
 
@@ -155,7 +155,7 @@ impl Quant for UnstrandedBasic {
 
     fn weight_read(
         &mut self,
-        read: &rust_htslib::bam::record::Record,
+        _read: &rust_htslib::bam::record::Record,
         gene_nos_seen_match: &HashSet<u32>,
         gene_nos_seen_reverse: &HashSet<u32>,
     ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
