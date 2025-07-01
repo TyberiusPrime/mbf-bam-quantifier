@@ -325,7 +325,7 @@ impl Engine {
                         } else {
                             first = false;
                         }
-                        tag.push_str(&format!("{}={},", gene_ids[*gene_no as usize], w));
+                        tag.push_str(&format!("{}={}", gene_ids[*gene_no as usize], w));
                     }
                     read.push_aux(b"XQ", rust_htslib::bam::record::Aux::String(&tag))
                         .expect("failed to push XQ tag");

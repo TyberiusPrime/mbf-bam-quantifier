@@ -284,7 +284,16 @@ impl Quant for UnstrandedFeatureCounts {
             );
         } else {
             //matches multiple regions -> don't count
-            (Vec::new(), Vec::new())
+            (
+                gene_nos_seen_match
+                    .iter()
+                    .map(|&id| (id, 0.0))
+                    .collect::<Vec<_>>(),
+                gene_nos_seen_reverse
+                    .iter()
+                    .map(|&id| (id, 0.0))
+                    .collect::<Vec<_>>(),
+            )//(Vec::new(), Vec::new())
         }
     }
 }
