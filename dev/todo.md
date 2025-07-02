@@ -5,7 +5,6 @@
 - coverage quantification
 
 - faster interval format instead of gtf parsing?
-- try noodle gtf parser, is it faster?
 
 - can we split our intervals bgfz borders? 
 

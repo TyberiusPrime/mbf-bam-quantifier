@@ -21,6 +21,7 @@ impl Categorical {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new_empty(count: u32) -> Categorical {
         let mut res = Categorical::new();
         if count > 0 {
@@ -29,6 +30,8 @@ impl Categorical {
         }
         res
     }
+
+    #[allow(dead_code)]
     pub fn new_empty_push(count: u32, value: &str) -> Categorical {
         let mut res = Categorical::new_empty(count);
         res.push(value);

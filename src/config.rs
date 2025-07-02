@@ -95,7 +95,7 @@ impl Input {
     ) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
         if let Source::GTF(gtf_config) = &self.source {
             let accepted_features = vec![&gtf_config.feature, &gtf_config.aggr_feature];
-            let mut accepted_tags: HashSet<String> = vec![
+            let accepted_tags: HashSet<String> = vec![
                 gtf_config.id_attribute.to_string(),
                 gtf_config.aggr_id_attribute.to_string(),
                 duplication_detection_id_attribute.to_string(),
@@ -110,7 +110,7 @@ impl Input {
                     .map(|s| s.to_string())
                     .collect::<HashSet<_>>(),
             )?; */
-            let mut parsed = crate::gtf::parse_noodles_gtf(
+            let mut parsed = crate::gtf::parse_minimal(
                 &gtf_config.filename,
                 accepted_features
                     .iter()

@@ -1,9 +1,7 @@
 use crate::io::open_file;
 use anyhow::{bail, Context, Result};
-use noodles_gff::feature::record::Attributes;
 use std::{
     collections::{HashMap, HashSet},
-    io::{BufRead, BufReader},
     str::FromStr,
 };
 
@@ -34,6 +32,12 @@ impl GTFEntrys {
     }
 
     pub fn filter(&mut self, keep: &[bool]) {
+        if keep.len() != self.start.len() {
+            panic!("keep vector must be the same length as the GTFEntrys");
+        }
+        if keep.len() == 0 {
+            return;
+        }
         let mut iter = keep.iter();
         self.seqname.values.retain(|_| *iter.next().unwrap());
 
@@ -52,6 +56,11 @@ impl GTFEntrys {
         }
         for values in self.vec_attributes.values_mut() {
             let mut iter = keep.iter();
+            assert_eq!(
+                values.len(),
+                keep.len(),
+                "Vec attributes had different length than the rest of the GTFEntries:"
+            );
             values.retain(|_| *iter.next().unwrap());
         }
     }
@@ -101,6 +110,7 @@ impl FromStr for Strand {
             "+" => Strand::Plus,
             "-" => Strand::Minus,
             "." => Strand::Unstranded,
+            "_" => Strand::Unstranded,
             _ => bail!("Invalid strand value: {}", s),
         })
     }
@@ -116,11 +126,105 @@ impl Into<i8> for &Strand {
     }
 }
 
-pub fn parse_noodles_gtf(
+//A gtf 'parser' (more like 'extract what we need') that doesn't
+// allocate every line at least once
+pub fn parse_minimal(
     filename: &str,
     accepted_features: HashSet<String>,
     accepted_tags: HashSet<String>,
 ) -> Result<HashMap<String, GTFEntrys>> {
+    use linereader::LineReader; // non allocateding.
+    let file = open_file(filename)?;
+    let mut reader = LineReader::with_capacity(128 * 1024, file);
+    let mut result = HashMap::new();
+
+    while let Some(line) = reader.next_line() {
+        let line = line.context("line reading error")?;
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with(b"#") {
+            continue; // skip comments
+        }
+        let line = std::str::from_utf8(line).context("line was not utf8")?;
+        if !line.ends_with("\n") {
+            bail!("Line length exceed our buffer size, please increase the buffer size in the LineReader::with_capacity() call.");
+        }
+        let mut fields = line.split('\t');
+        let seqname = fields.next().context("No seqname")?;
+        let _source = fields.next().context("No source")?;
+        let feature_type = fields.next().context("No feature type")?;
+        if !accepted_features.contains(feature_type) {
+            continue;
+        }
+        let start: u64 = fields
+            .next()
+            .context("No start")?
+            .parse()
+            .context("start not int")?;
+        let start = start.checked_sub(1).context("start must be >= 1")?; // GTF is 1-based, convert to 0-based
+        let end: u64 = fields
+            .next()
+            .context("No end")?
+            .parse()
+            .context("end not int")?;
+        let _score = fields.next().context("no score")?;
+        let strand: Strand = fields
+            .next()
+            .context("no strand")?
+            .parse()
+            .context("failed to parse strand. Allowed +-._")?;
+        let _frame = fields.next().context("no frame")?;
+        let attributes_str = fields.next().context("No attributes")?;
+        let it = attributes_str
+            .split_terminator(';')
+            .map(str::trim_start)
+            .filter(|x| !x.is_empty());
+        let mut tags = Vec::new();
+        for attr_value in it {
+            let mut kv = attr_value.splitn(2, ' ');
+            let key: &str = kv.next().unwrap();
+            if !accepted_tags.contains(key) {
+                continue;
+            }
+            let value: &str = kv.next().unwrap().trim_end().trim_matches('"');
+            tags.push((key, value));
+        }
+        if !tags.is_empty() {
+            let entry = result
+                .entry(feature_type.to_string())
+                .or_insert_with(GTFEntrys::new);
+            entry.seqname.push(seqname);
+            entry.start.push(start);
+            entry.end.push(end);
+            entry.strand.push(strand);
+            let mut seen = HashSet::new();
+            for (key, value) in tags {
+                if seen.contains(key) {
+                    bail!("doublicate attribute in GTF: {} in line: {}", key, line);
+                }
+                seen.insert(key);
+                match entry.vec_attributes.entry(key.to_string()) {
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        e.get_mut().push(value.to_string());
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(vector_new_empty_push(entry.count, value.to_string()));
+                    }
+                }
+            }
+            entry.count += 1;
+        }
+    }
+    Ok(result)
+}
+
+/* pub fn parse_noodles_gtf(
+    filename: &str,
+    accepted_features: HashSet<String>,
+    accepted_tags: HashSet<String>,
+) -> Result<HashMap<String, GTFEntrys>> {
+    use noodles_gff::feature::record::Attributes;
     let f = BufReader::new(open_file(filename)?);
     let mut reader = noodles_gtf::io::Reader::new(f);
     let mut out: HashMap<String, GTFEntrys> = HashMap::new();
@@ -203,9 +307,9 @@ pub fn parse_noodles_gtf(
     }
 
     Ok(out)
-}
+} */
 
-pub fn parse_ensembl_gtf(
+/* pub fn parse_ensembl_gtf(
     filename: &str,
     accepted_features: HashSet<String>,
 ) -> Result<HashMap<String, GTFEntrys>> {
@@ -326,4 +430,4 @@ pub fn parse_ensembl_gtf(
     }
 
     Ok(out)
-}
+} */

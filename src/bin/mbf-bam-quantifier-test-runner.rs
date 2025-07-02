@@ -379,8 +379,8 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
     let input_files = scan_dir(test_case.dir.as_path(), |relative_path, _filename| {
         relative_path.starts_with("input")
     })?;
-    let expected_files = scan_dir(test_case.dir.as_path(), |relative_path, _filename| {
-        !relative_path.starts_with("input") && !relative_path.starts_with("ignore_")
+    let expected_files = scan_dir(test_case.dir.as_path(), |_relative_path, filename| {
+        !filename.starts_with("input") && !filename.starts_with("ignore_")
     })?;
 
     let temp_dir = setup_test_environment(input_files).context("Setup test dir")?;
