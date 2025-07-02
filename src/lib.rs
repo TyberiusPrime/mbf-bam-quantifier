@@ -5,6 +5,7 @@ mod bam_ext;
 mod categorical;
 mod config;
 mod engine;
+mod extractors;
 mod filters;
 mod gtf;
 mod io;
@@ -21,7 +22,7 @@ pub fn run(toml_file: &Path) -> Result<()> {
 
     parsed
         .quantification
-        .quantify(&parsed.input, parsed.filter, &parsed.output)
+        .quantify(&parsed.input, parsed.filter, &parsed.output, parsed.umi)
         .context("Error in quantification")?;
 
     Ok(())

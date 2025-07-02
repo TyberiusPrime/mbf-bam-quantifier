@@ -6,26 +6,25 @@ use rust_htslib::bam::Read;
 
 use crate::{
     config::{Config, Input, Output},
-    engine::IntervalResult,
+    engine::IntervalResult, extractors::UMIExtraction,
 };
 use serde::{Deserialize, Serialize};
 
 mod basic;
 mod featurecounts;
-/*mod umi; */
+mod umi; 
 
 #[enum_dispatch(Quantification)]
 pub trait Quant: Send + Sync + Clone {
     fn check(&self, _config: &Config) -> anyhow::Result<()> {
         Ok(())
     }
-    fn init(&mut self) {}
 
     fn output_only_one_column(&self) -> bool {
         false
     }
 
-    fn weight_read_group(&self, annotated_reads: &mut [crate::engine::AnnotatedRead])
+    fn weight_read_group(&self, annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)])
         -> Result<()>;
 
     /// whether forward /reverse matches should be swapped
@@ -48,10 +47,9 @@ pub enum Quantification {
     UnstrandedFeatureCounts(featurecounts::UnstrandedFeatureCounts),
     #[serde(alias = "stranded_featurecounts")]
     StrandedFeatureCounts(featurecounts::StrandedFeatureCounts),
-    /*
 
     #[serde(alias = "unstranded_umi")]
-    UnstrandedUMI(umi::UnstrandedUMI), */
+    UnstrandedUMI(umi::UnstrandedUMI), 
 }
 
 impl Quantification {
@@ -60,11 +58,11 @@ impl Quantification {
         input: &Input,
         filters: Vec<crate::filters::Filter>,
         output: &Output,
+        umi_extraction: UMIExtraction,
     ) -> anyhow::Result<()> {
         // Here you would implement the quantification logic
         // For now, we just return Ok to indicate success
         //
-        self.init();
         let (engine, sorted_output_keys, output_title): (_, Option<Vec<String>>, String) =
             match input.source {
                 crate::config::Source::GTF(ref gtf_config) => {
@@ -107,6 +105,7 @@ impl Quantification {
                             aggr_id_attribute,
                             filters,
                             self.clone(),
+                            umi_extraction
                         )?,
                         Some(sorted_output_keys),
                         aggr_id_attribute.to_string(),
@@ -135,7 +134,9 @@ impl Quantification {
                     let sorted_output_keys: Vec<String> =
                         references.iter().map(|(name, _)| name.clone()).collect();
                     (
-                        crate::engine::Engine::from_references(references, filters, self.clone())?,
+                        crate::engine::Engine::from_references(references, filters, self.clone(),
+                            umi_extraction
+                    )?,
                         Some(sorted_output_keys),
                         "reference".to_string(),
                     )
@@ -146,7 +147,9 @@ impl Quantification {
                         bail!("Setting Direction(=reverse) on a BamTag is meaningless.")
                     }
                     (
-                        crate::engine::Engine::from_bam_tag(tag, filters, self.clone()),
+                        crate::engine::Engine::from_bam_tag(tag, filters, self.clone(),
+                            umi_extraction
+                    ),
                         None,
                         std::str::from_utf8(&tag)
                             .context("Bam tag was not valid utf8")?

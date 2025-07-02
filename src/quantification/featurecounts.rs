@@ -15,9 +15,9 @@ impl Quant for UnstrandedFeatureCounts {
 
     fn weight_read_group(
         &self,
-        annotated_reads: &mut [crate::engine::AnnotatedRead],
+        annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
     ) -> Result<()> {
-        for read in annotated_reads.iter_mut() {
+        for (read, _org_index) in annotated_reads.iter_mut() {
             match read {
                 crate::engine::AnnotatedRead::Counted(read) => {
                     for (k, v) in read.genes_hit_reverse.drain() {
@@ -55,9 +55,9 @@ impl Quant for StrandedFeatureCounts {
 
     fn weight_read_group(
         &self,
-        annotated_reads: &mut [crate::engine::AnnotatedRead],
+        annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
     ) -> Result<()> {
-        for read in annotated_reads.iter_mut() {
+        for (read, _org_index) in annotated_reads.iter_mut() {
             match read {
                 crate::engine::AnnotatedRead::Counted(read) => {
                     if read.genes_hit_correct.len() == 1 {

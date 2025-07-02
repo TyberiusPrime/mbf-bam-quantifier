@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_valid::Validate;
 
-use crate::quantification::{Quant, Quantification};
+use crate::{extractors::UMIExtraction, quantification::{Quant, Quantification}};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -17,6 +17,10 @@ pub struct Config {
     pub filter: Vec<crate::filters::Filter>,
     #[serde(alias = "quant")]
     pub quantification: Quantification,
+
+    #[serde(alias = "UMI")]
+    #[serde(default)]
+    pub umi: UMIExtraction,
     pub output: Output,
 }
 

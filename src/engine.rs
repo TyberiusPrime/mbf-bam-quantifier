@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
+use crate::extractors::UMIExtractor;
 use crate::filters::ReadFilter;
 use crate::gtf::Strand;
 use crate::quantification::{Quant, Quantification};
@@ -149,7 +150,7 @@ pub struct AnnotatedReadInfo {
     pub genes_hit_reverse: HashMap<String, f32>, //todo: optimize!
     pub umi: Option<String>,     // Optional: What's it's UMI.
     pub barcode: Option<String>, // Optional: What's it's cellbarcode
-    pub org_idx: u32,
+    pub mapping_priority: (u8, u8),
 }
 
 pub enum ReadToGeneMatcher {
@@ -188,6 +189,7 @@ pub struct Engine {
     quantifier: Quantification,
     filters: Vec<crate::filters::Filter>,
     matcher: ReadToGeneMatcher,
+    umi_extractor: crate::extractors::UMIExtraction,
 }
 
 impl Engine {
@@ -198,6 +200,7 @@ impl Engine {
         aggregation_id_attribute: &str,
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
+        umi_extractor: crate::extractors::UMIExtraction,
     ) -> Result<Self> {
         let feature_entries =  gtf_entries
                 .remove(entry_kind)
@@ -230,12 +233,14 @@ impl Engine {
             }),
             filters,
             quantifier,
+            umi_extractor,
         })
     }
     pub fn from_references(
         references: Vec<(String, u64)>,
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
+        umi_extractor: crate::extractors::UMIExtraction,
     ) -> Result<Self> {
         let mut trees: HashMap<String, (OurTree, Vec<String>)> = HashMap::new();
         for (seq_name, length) in references.iter() {
@@ -257,6 +262,7 @@ impl Engine {
             }),
             filters,
             quantifier,
+            umi_extractor,
         })
     }
 
@@ -264,6 +270,7 @@ impl Engine {
         tag: [u8; 2],
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
+        umi_extractor: crate::extractors::UMIExtraction,
     ) -> Self {
         assert!(
             tag[0] == tag[0].to_ascii_uppercase(),
@@ -277,6 +284,7 @@ impl Engine {
             matcher: ReadToGeneMatcher::TagMatcher(TagMatcher { tag }),
             filters,
             quantifier,
+            umi_extractor,
         }
     }
 
@@ -339,16 +347,16 @@ impl Engine {
 
                     let filtered = annotated_reads
                         .iter()
-                        .filter(|read| matches!(read, AnnotatedRead::Filtered))
+                        .filter(|(read, _org_index)| matches!(read, AnnotatedRead::Filtered))
                         .count();
                     let total = annotated_reads.len();
                     let outside = annotated_reads
                         .iter()
-                        .filter(|read| matches!(read, AnnotatedRead::NotInRegion))
+                        .filter(|(read, _org_index)| matches!(read, AnnotatedRead::NotInRegion))
                         .count();
 
                     //annotated_reads.retain(|read| matches!(read, AnnotatedRead::Counted(_)));
-                    annotated_reads.sort_by_key(|read| match read {
+                    annotated_reads.sort_by_key(|(read, org_index)| match read {
                         AnnotatedRead::Counted(info) => info.corrected_position as u64,
                         _ => u32::MAX as u64 + 1,
                     });
@@ -356,7 +364,7 @@ impl Engine {
                     let mut last_pos = None;
                     let mut change_indices = Vec::new();
                     let mut found_filtered = false;
-                    for (ii, read) in annotated_reads.iter().enumerate() {
+                    for (ii, (read, org_index)) in annotated_reads.iter().enumerate() {
                         let info = match read {
                             AnnotatedRead::Counted(info) => info,
                             _ => {
@@ -383,22 +391,35 @@ impl Engine {
                     }
 
                     let mut counts: HashMap<String, (f64, f64)> = HashMap::new();
-                    for read in annotated_reads {
+                    for (read, _org_index) in &annotated_reads {
                         match read {
                             AnnotatedRead::Duplicate
                             | AnnotatedRead::Filtered
                             | AnnotatedRead::NotInRegion => {}
                             AnnotatedRead::Counted(info) => {
-                                for (gene, weight) in info.genes_hit_correct {
-                                    let entry = counts.entry(gene).or_insert((0.0, 0.0));
-                                    entry.0 += weight as f64; // count forward
+                                for (gene, weight) in &info.genes_hit_correct {
+                                    let entry =
+                                        counts.entry(gene.to_string()).or_insert((0.0, 0.0));
+                                    entry.0 += *weight as f64; // count forward
                                 }
-                                for (gene, weight) in info.genes_hit_reverse {
-                                    let entry = counts.entry(gene).or_insert((0.0, 0.0));
-                                    entry.1 += weight as f64; // count reverse
+                                for (gene, weight) in &info.genes_hit_reverse {
+                                    let entry =
+                                        counts.entry(gene.to_string()).or_insert((0.0, 0.0));
+                                    entry.1 += *weight as f64; // count reverse
                                 }
                             }
                         }
+                    }
+                    if let Some((out_bam_path, header)) = output_bam_info.as_ref() {
+                        Self::write_annotated_reads(
+                            &mut bam,
+                            &chunk,
+                            &annotated_reads,
+                            &out_bam_path,
+                            header,
+                            max_skip_len,
+                        )
+                        .expect("Failed to write output bam");
                     }
                     //todo: bam writing...
                     //
@@ -437,7 +458,7 @@ impl Engine {
         start: u32,
         stop: u32,
         max_skip_len: u32,
-    ) -> Result<Vec<AnnotatedRead>> {
+    ) -> Result<Vec<(AnnotatedRead, usize)>> {
         let mut res = Vec::new();
 
         let mut read: bam::Record = bam::Record::new();
@@ -459,14 +480,14 @@ impl Engine {
                 if ((corrected_position as u32) < start) || ((corrected_position as u32) >= stop) {
                     //this ensures we count a read only in the chunk where it's left most
                     //pos is in.
-                    res.push(AnnotatedRead::NotInRegion);
+                    res.push((AnnotatedRead::NotInRegion, ii));
                     continue;
                 }
 
                 for f in self.filters.iter() {
                     if f.remove_read(&read) {
                         // if the read does not pass the filter, skip it
-                        res.push(AnnotatedRead::Filtered);
+                        res.push((AnnotatedRead::Filtered, ii));
                         continue 'outer;
                     }
                 }
@@ -479,17 +500,93 @@ impl Engine {
                     corrected_position: corrected_position as u32,
                     genes_hit_correct: genes_hit_correct.into_iter().map(|id| (id, 1.0)).collect(),
                     genes_hit_reverse: genes_hit_reverse.into_iter().map(|id| (id, 1.0)).collect(),
-                    umi: None,
+                    umi: self.umi_extractor.extract(&read),
                     barcode: None,
-                    org_idx: ii,
+                    mapping_priority: (
+                        read.no_of_mapping_coordinates().try_into().unwrap_or(255),
+                        read.mapq(),
+                    ),
                 };
+                res.push((AnnotatedRead::Counted(info), ii));
                 ii += 1;
-                res.push(AnnotatedRead::Counted(info));
             } else {
                 panic!("Did not expect to see an unaligned read in a chunk");
             }
         }
         Ok(res)
+    }
+
+    fn write_annotated_reads(
+        bam: &mut rust_htslib::bam::IndexedReader,
+        chunk: &Chunk,
+        annotated_reads: &[(AnnotatedRead, usize)],
+        out_bam_path: &Path,
+        header: &rust_htslib::bam::Header,
+        max_skip_len: u32,
+    ) -> Result<()> {
+        let mut out_bam = rust_htslib::bam::Writer::from_path(
+            out_bam_path.join(chunk.str_id()),
+            &header,
+            rust_htslib::bam::Format::Bam,
+        )?;
+        let idx_to_annotated: HashMap<usize, &AnnotatedRead> = annotated_reads
+            .iter()
+            .map(|(read, org_index)| (*org_index, read))
+            .collect();
+        bam.fetch((
+            chunk.tid,
+            chunk.start as u64,
+            (chunk.stop + max_skip_len) as u64, // this is a correctness issue
+                                                // We'll read unnecessary reads here,
+                                                // just to discard them because their correceted position is beyond the region
+                                                // but there might be a read there that is.
+        ))?;
+        let mut read = bam::Record::new();
+        let mut ii = 0;
+        while let Some(bam_result) = bam.read(&mut read) {
+            bam_result?;
+            if let Some(&anno_read) = idx_to_annotated.get(&ii) {
+                match anno_read {
+                    AnnotatedRead::NotInRegion => continue,
+                    AnnotatedRead::Filtered => {}
+                    AnnotatedRead::Duplicate => {
+                        read.push_aux(b"XD", rust_htslib::bam::record::Aux::U8(1))?;
+                    }
+                    AnnotatedRead::Counted(info) => {
+                        //we have a read that was annotated
+                        //write it to the output bam
+                        let mut tag = String::new();
+                        let mut first = true;
+                        for (gene, weight) in &info.genes_hit_correct {
+                            if !first {
+                                tag.push(',')
+                            }
+                            first = false;
+                            tag.push_str(&format!("{}={:.2}", gene, weight));
+                        }
+                        read.push_aux(b"XQ", rust_htslib::bam::record::Aux::String(&tag))?;
+
+                        let mut tag = String::new();
+                        let mut first = true;
+                        for (gene, weight) in &info.genes_hit_reverse {
+                            if !first {
+                                tag.push(',')
+                            }
+                            first = false;
+                            tag.push_str(&format!("{}={:.2}", gene, weight));
+                        }
+                        read.push_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
+                        read.push_aux(b"XP", rust_htslib::bam::record::Aux::U32(
+                            info.corrected_position as u32,
+                        ))?;
+                    }
+                }
+                out_bam.write(&read)?;
+            }
+
+            ii += 1
+        }
+        Ok(())
     }
 }
 
@@ -641,259 +738,6 @@ impl TreeMatcher {
         }
         Ok((gene_nos_seen_match, gene_nos_seen_reverse))
     }
-
-    //called once per chunk.
-    /* fn quantify_in_region(
-        &self,
-        mut bam: rust_htslib::bam::IndexedReader,
-        chr: &str,
-        tid: u32,
-        start: u32,
-        stop: u32,
-        bam_output_path: Option<(PathBuf, &rust_htslib::bam::Header)>,
-    ) -> Result<IntervalResult> {
-        let (tree, gene_ids) = self.reference_to_count_trees.get(chr).unwrap();
-        let mut result = vec![(0.0, 0.0); gene_ids.len()];
-        let mut gene_nos_seen_match = HashSet::<u32>::new();
-        let mut gene_nos_seen_reverse = HashSet::<u32>::new();
-        let mut filtered_count = 0;
-        let mut outside_count = 0;
-        let mut total_count = 0;
-        let mut read: bam::Record = bam::Record::new();
-        let mut bam_out: Option<rust_htslib::bam::Writer> =
-            bam_output_path.map(|(path, header)| {
-                let mut writer = rust_htslib::bam::Writer::from_path(
-                    path,
-                    header,
-                    rust_htslib::bam::Format::Bam,
-                )
-                .expect("Failed to create BAM writer");
-                writer.set_threads(1).expect("Failed to set threads");
-                writer
-            });
-        let mut quant = self.quantifier.clone();
-        let quant_reverse = self.quantifier.reverse();
-        let mut last_pos = None;
-        let mut delayed_reads: Vec<(bam::Record, HashSet<u32>, HashSet<u32>)> = Vec::new();
-
-        bam.fetch((tid, start as u64, stop as u64))?;
-        while let Some(bam_result) = bam.read(&mut read) {
-            bam_result?;
-            total_count += 1;
-            // do not count multiple blocks matching in one gene multiple times
-            gene_nos_seen_match.clear();
-            gene_nos_seen_reverse.clear();
-
-            let mut hit = false;
-            if ((read.pos() as u32) < start) || ((read.pos() as u32) >= stop) {
-                //this ensures we count a read only in the chunk where it's left most
-                //pos is in.
-                continue;
-            }
-
-            let blocks = read.blocks();
-            for iv in blocks.iter() {
-                if (iv.1 < start) || iv.0 >= stop || ((iv.0 < start) && (iv.1 >= start)) {
-                    // if this block is outside of the region
-                    // don't count it at all.
-                    // if it is on a block boundary
-                    // only count it for the left side.
-                    // which is ok, since we place the blocks to the right
-                    // of our intervals.
-                    continue;
-                }
-                for r in tree.find(iv.0..iv.1) {
-                    hit = true;
-                    let entry = r.data();
-                    let gene_no = entry.0;
-                    let strand = entry.1;
-                    let target = match (quant_reverse, read.is_reverse(), strand) {
-                        (false, false, Strand::Plus) => &mut gene_nos_seen_match,
-                        (false, false, Strand::Minus) => &mut gene_nos_seen_reverse,
-                        (false, true, Strand::Plus) => &mut gene_nos_seen_reverse,
-                        (false, true, Strand::Minus) => &mut gene_nos_seen_match,
-
-                        (true, false, Strand::Plus) => &mut gene_nos_seen_reverse,
-                        (true, false, Strand::Minus) => &mut gene_nos_seen_match,
-                        (true, true, Strand::Plus) => &mut gene_nos_seen_match,
-                        (true, true, Strand::Minus) => &mut gene_nos_seen_reverse,
-                        (_, _, Strand::Unstranded) => &mut gene_nos_seen_match,
-                    };
-                    target.insert(gene_no);
-                }
-            }
-
-            if !hit {
-                outside_count += 1;
-            } else {
-                let new_pos = Some((read.pos(), read.is_reverse()));
-                if last_pos != new_pos {
-                    let weighted_reads = quant.position_advanced(&mut delayed_reads, false);
-                    for (mut read, weights_forward, weights_reverse) in weighted_reads.into_iter() {
-                        Self::output_read(
-                            bam_out.as_mut(),
-                            &mut read,
-                            ReadOut::Weight(weights_forward, weights_reverse),
-                            &gene_ids,
-                            &mut result,
-                        )?;
-                    }
-                }
-                last_pos = new_pos;
-
-                let mut filtered = false;
-                for f in self.filters.iter() {
-                    if f.remove_read(&read) {
-                        // if the read does not pass the filter, skip it
-                        filtered = true;
-                        break;
-                    }
-                }
-                let weight = if filtered {
-                    filtered_count += 1;
-                    ReadWeight::Filtered(
-                        gene_nos_seen_match.iter().map(|&id| id).collect(),
-                        gene_nos_seen_reverse.iter().map(|&id| id).collect(),
-                    )
-                } else {
-                    quant.weight_read(&read, &gene_nos_seen_match, &gene_nos_seen_reverse)
-                };
-                match weight {
-                    ReadWeight::Weights(m, r) => {
-                        Self::output_read(
-                            bam_out.as_mut(),
-                            &mut read,
-                            ReadOut::Weight(m, r),
-                            &gene_ids,
-                            &mut result,
-                        )?;
-                    }
-                    ReadWeight::Filtered(m, r) => {
-                        Self::output_read(
-                            bam_out.as_mut(),
-                            &mut read,
-                            ReadOut::Filtered(m, r),
-                            &gene_ids,
-                            &mut result,
-                        )?;
-                    }
-                    ReadWeight::Delay => {
-                        delayed_reads.push((
-                            read.clone(),
-                            gene_nos_seen_match.clone(),
-                            gene_nos_seen_reverse.clone(),
-                        ));
-                    }
-                    ReadWeight::Error(e) => {
-                        bail!("Error while processing read: {}", e);
-                    }
-                }
-            }
-        }
-        if !delayed_reads.is_empty() {
-            let weighted_reads = quant.position_advanced(&mut delayed_reads, true);
-            assert!(
-                delayed_reads.is_empty(),
-                "After final quant position_advance, delayed_reads should be empty"
-            );
-            for (mut read, weights_forward, weights_reverse) in weighted_reads.into_iter() {
-                Self::output_read(
-                    bam_out.as_mut(),
-                    &mut read,
-                    ReadOut::Weight(weights_forward, weights_reverse),
-                    &gene_ids,
-                    &mut result,
-                )?;
-            }
-        }
-
-        Ok(IntervalResult {
-            counts: gene_ids
-                .iter()
-                .enumerate()
-                .map(|(idx, id)| (id.clone(), result[idx]))
-                .collect(),
-            filtered: filtered_count,
-            total: total_count,
-            outside: outside_count,
-        })
-    } */
-
-    /* fn output_read(
-        mut bam_out: Option<&mut rust_htslib::bam::Writer>,
-        read: &mut bam::Record,
-        weight: ReadOut,
-        gene_ids: &[String],
-        result: &mut Vec<(f64, f64)>,
-    ) -> Result<()> {
-        if let Some(bam_out) = bam_out.as_mut() {
-            let mut tag = String::new();
-            let mut first = true;
-            match &weight {
-                ReadOut::Weight(match_weights, _) => {
-                    for (gene_no, w) in match_weights.iter() {
-                        if !first {
-                            tag.push(',');
-                        } else {
-                            first = false;
-                        }
-                        tag.push_str(&format!("{}={}", gene_ids[*gene_no as usize], w));
-                    }
-                }
-                ReadOut::Filtered(gene_nos, _) => {
-                    for gene_no in gene_nos {
-                        if !first {
-                            tag.push(',');
-                        } else {
-                            first = false;
-                        }
-                        tag.push_str(&format!("{}=f", gene_ids[*gene_no as usize]));
-                    }
-                }
-            }
-            read.push_aux(b"XQ", rust_htslib::bam::record::Aux::String(&tag))
-                .expect("failed to push XQ tag");
-
-            let mut tag = String::new();
-            let mut first = true;
-            match &weight {
-                ReadOut::Weight(_, rev_weights) => {
-                    for (gene_no, w) in rev_weights.iter() {
-                        if !first {
-                            tag.push(',');
-                        } else {
-                            first = false;
-                        }
-                        tag.push_str(&format!("{}={}", gene_ids[*gene_no as usize], w));
-                    }
-                }
-                ReadOut::Filtered(_, gene_nos_reverse) => {
-                    for gene_no in gene_nos_reverse {
-                        if !first {
-                            tag.push(',');
-                        } else {
-                            first = false;
-                        }
-                        tag.push_str(&format!("{}=f", gene_ids[*gene_no as usize]));
-                    }
-                }
-            }
-            read.push_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))
-                .expect("failed to push XR tag");
-
-            bam_out.write(&read).expect("Failed to write BAM record");
-        }
-        if let ReadOut::Weight(match_weights, rev_weights) = weight {
-            for (gene_id, w) in match_weights {
-                result[gene_id as usize].0 += w;
-            }
-
-            for (gene_id, w) in rev_weights {
-                result[gene_id as usize].1 += w;
-            }
-        }
-        Ok(())
-    } */
 }
 
 fn add_dual_hashmaps(

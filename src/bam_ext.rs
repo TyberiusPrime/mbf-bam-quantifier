@@ -8,6 +8,8 @@ pub trait BamRecordExtensions {
     fn introns(&self) -> Vec<(u32, u32)>;
 
     fn corrected_pos(&self, max_skip_len: u32) -> i64;
+
+    fn no_of_mapping_coordinates(&self) -> u32;
 }
 
 impl BamRecordExtensions for bam::Record {
@@ -27,14 +29,33 @@ impl BamRecordExtensions for bam::Record {
         if p < 0 {
             p
         } else {
-            let skip = match self.is_reverse() {
-                true => self.cigar().trailing_softclips(),
-                false => self.cigar().leading_softclips(),
-            };
+            //it's always the leading ones... since the seq gets flipped
+
+            let skip = self.cigar().leading_softclips();
             if skip > max_skip_len.into() {
-                panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?") 
+                panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?")
             }
             p.saturating_sub(skip) as i64
+        }
+    }
+    /// try to retrieve the number of mapping coordinates
+    /// for tihs read. Uses the NH tag. defaults to 1
+    fn no_of_mapping_coordinates(&self) -> u32 {
+        //let's try the NH tag, as by the tag spec
+        if let Ok(nh) = self.aux(b"NH") {
+            match nh {
+                bam::record::Aux::U8(x) => x as u32,
+                bam::record::Aux::U16(x) => x as u32,
+                bam::record::Aux::U32(x) => x,
+                /* bam::record::Aux::I8(x) => x as u32,
+                bam::record::Aux::I16(x) => x as u32,
+                bam::record::Aux::I32(x) => x, */
+                _ => {
+                    panic!("Mapping coordinate tag NH wasn't an unsigned int.");
+                }
+            }
+        } else {
+            1 // we can't tell.
         }
     }
 }

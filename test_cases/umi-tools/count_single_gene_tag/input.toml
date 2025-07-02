@@ -4,10 +4,12 @@
     source.tag = 'XF'
 
 
+[umi]
+    type = "regex_name"
+    regex = ":(UMI_[AGTC]+):"
+
 [quant]
 	mode = "unstranded_umi"
-    umi_extraction.type = "regex_name"
-    umi_extraction.regex = ":(UMI_[AGTC]+):"
 	umi_grouping = "unique"
 
 
