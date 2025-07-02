@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::fs::{self, DirEntry};
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;

@@ -1,5 +1,7 @@
-use std::collections::HashSet;
+use crate::engine::AnnotatedRead;
+
 use super::{Direction, Quant};
+use anyhow::Result;
 
 /// count every read that matches. That means a read can count for multiple
 /// regions
@@ -12,22 +14,29 @@ impl Quant for UnstrandedBasic {
         true
     }
 
-    fn weight_read(
-        &mut self,
-        _read: &rust_htslib::bam::record::Record,
-        gene_nos_seen_match: &HashSet<u32>,
-        gene_nos_seen_reverse: &HashSet<u32>,
-    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
-        let mut res = Vec::new();
-        res.extend(gene_nos_seen_match.iter().map(|&id| (id, 1.0)));
-        for id in gene_nos_seen_reverse {
-            if !gene_nos_seen_match.contains(id) {
-                res.push((*id, 1.0));
+    fn weight_read_group(
+        &self,
+        annotated_reads: &mut [crate::engine::AnnotatedRead],
+    ) -> Result<()> {
+        for read in annotated_reads.iter_mut() {
+            match read {
+                AnnotatedRead::Counted(read) => {
+                    for gene_id in read.genes_hit_reverse.keys() {
+                        if !read.genes_hit_correct.contains_key(gene_id) {
+                            read.genes_hit_correct.insert(gene_id.to_string(), 1.0);
+                        }
+                    }
+                    read.genes_hit_reverse.clear()
+                }
+                _ => {
+                    unreachable!();
+                }
             }
         }
-        (res, Vec::new())
+        Ok(())
     }
 }
+
 ///
 /// count every read that matches. That means a read can count for multiple
 /// regions. Considers strandedness.
@@ -44,22 +53,13 @@ impl Quant for StrandedBasic {
             Direction::Reverse => true,
         }
     }
-
-    fn weight_read(
-        &mut self,
-        _read: &rust_htslib::bam::record::Record,
-        gene_nos_seen_match: &HashSet<u32>,
-        gene_nos_seen_reverse: &HashSet<u32>,
-    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
-        (
-            gene_nos_seen_match
-                .iter()
-                .map(|&id| (id, 1.0))
-                .collect::<Vec<_>>(),
-            gene_nos_seen_reverse
-                .iter()
-                .map(|&id| (id, 1.0))
-                .collect::<Vec<_>>(),
-        )
+    fn weight_read_group(
+        &self,
+        _annotated_reads: &mut [crate::engine::AnnotatedRead],
+    ) -> Result<()> {
+        //since we already have 1.0 in the forward direction
+        //for simple matching reads, this is a noop.
+        //
+        Ok(())
     }
 }

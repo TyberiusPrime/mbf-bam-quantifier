@@ -1,5 +1,5 @@
 use crate::io::open_file;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
@@ -148,7 +148,9 @@ pub fn parse_minimal(
         }
         let line = std::str::from_utf8(line).context("line was not utf8")?;
         if !line.ends_with("\n") {
-            bail!("Line length exceed our buffer size, please increase the buffer size in the LineReader::with_capacity() call.");
+            bail!(
+                "Line length exceed our buffer size, please increase the buffer size in the LineReader::with_capacity() call."
+            );
         }
         let mut fields = line.split('\t');
         let seqname = fields.next().context("No seqname")?;

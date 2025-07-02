@@ -6,6 +6,8 @@ pub trait BamRecordExtensions {
     ///find intron positions (start, stop)
     #[allow(dead_code)] //todo: check
     fn introns(&self) -> Vec<(u32, u32)>;
+
+    fn corrected_pos(&self, max_skip_len: u32) -> i64;
 }
 
 impl BamRecordExtensions for bam::Record {
@@ -19,6 +21,21 @@ impl BamRecordExtensions for bam::Record {
         htslib_record_extensions::introns(self)
             .map(|x| (x[0] as u32, x[1] as u32))
             .collect()
+    }
+    fn corrected_pos(&self, max_skip_len: u32) -> i64 {
+        let p = self.pos();
+        if p < 0 {
+            p
+        } else {
+            let skip = match self.is_reverse() {
+                true => self.cigar().trailing_softclips(),
+                false => self.cigar().leading_softclips(),
+            };
+            if skip > max_skip_len.into() {
+                panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?") 
+            }
+            p.saturating_sub(skip) as i64
+        }
     }
 }
 

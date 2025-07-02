@@ -4,13 +4,13 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_valid::Validate;
 
 use crate::quantification::{Quant, Quantification};
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub input: Input,
     #[serde(default)]
@@ -20,11 +20,18 @@ pub struct Config {
     pub output: Output,
 }
 
+fn default_max_skip_length() -> u32 {
+    //1000 // that's what umi-tools does.
+    150 // should be a decent enough value for Illumina
+}
+
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     pub bam: String,
     pub source: Source,
+    #[serde(default="default_max_skip_length")]
+    pub max_skip_length: u32,
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize)]

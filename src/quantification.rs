@@ -2,7 +2,7 @@ use std::{collections::HashSet, io::Write, path::Path};
 
 use anyhow::{bail, Context, Result};
 use enum_dispatch::enum_dispatch;
-use rust_htslib::bam::{Read};
+use rust_htslib::bam::Read;
 
 use crate::{
     config::{Config, Input, Output},
@@ -12,23 +12,21 @@ use serde::{Deserialize, Serialize};
 
 mod basic;
 mod featurecounts;
+/*mod umi; */
 
 #[enum_dispatch(Quantification)]
 pub trait Quant: Send + Sync + Clone {
     fn check(&self, _config: &Config) -> anyhow::Result<()> {
         Ok(())
     }
+    fn init(&mut self) {}
 
     fn output_only_one_column(&self) -> bool {
         false
     }
 
-    fn weight_read(
-        &mut self,
-        read: &rust_htslib::bam::record::Record,
-        gene_nos_seen_match: &HashSet<u32>,
-        gene_nos_seen_reverse: &HashSet<u32>,
-    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>);
+    fn weight_read_group(&self, annotated_reads: &mut [crate::engine::AnnotatedRead])
+        -> Result<()>;
 
     /// whether forward /reverse matches should be swapped
     fn reverse(&self) -> bool {
@@ -36,12 +34,13 @@ pub trait Quant: Send + Sync + Clone {
     }
 }
 
-#[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, serde::Serialize)]
+#[derive(serde::Deserialize, Debug, Clone, strum_macros::Display)]
 #[serde(tag = "mode")]
 #[enum_dispatch]
 pub enum Quantification {
     #[serde(alias = "unstranded_basic")]
     UnstrandedBasic(basic::UnstrandedBasic),
+
     #[serde(alias = "stranded_basic")]
     StrandedBasic(basic::StrandedBasic),
 
@@ -49,11 +48,15 @@ pub enum Quantification {
     UnstrandedFeatureCounts(featurecounts::UnstrandedFeatureCounts),
     #[serde(alias = "stranded_featurecounts")]
     StrandedFeatureCounts(featurecounts::StrandedFeatureCounts),
+    /*
+
+    #[serde(alias = "unstranded_umi")]
+    UnstrandedUMI(umi::UnstrandedUMI), */
 }
 
 impl Quantification {
     pub fn quantify(
-        &self,
+        &mut self,
         input: &Input,
         filters: Vec<crate::filters::Filter>,
         output: &Output,
@@ -61,101 +64,103 @@ impl Quantification {
         // Here you would implement the quantification logic
         // For now, we just return Ok to indicate success
         //
-        let (engine, sorted_output_keys, output_title): (
-        _, Option<Vec<String>>, String)
+        self.init();
+        let (engine, sorted_output_keys, output_title): (_, Option<Vec<String>>, String) =
+            match input.source {
+                crate::config::Source::GTF(ref gtf_config) => {
+                    let aggr_id_attribute = gtf_config
+                        .aggr_id_attribute
+                        .as_ref()
+                        .map(|x| x.as_str())
+                        .unwrap_or(gtf_config.id_attribute.as_str());
 
-        = match input.source {
-            crate::config::Source::GTF(ref gtf_config) => {
-                let aggr_id_attribute = gtf_config
-                    .aggr_id_attribute
-                    .as_ref()
-                    .map(|x| x.as_str())
-                    .unwrap_or(gtf_config.id_attribute.as_str());
+                    let gtf_entries =
+                        input.read_gtf(gtf_config.duplicate_handling, aggr_id_attribute)?;
 
-                let gtf_entries =
-                    input.read_gtf(gtf_config.duplicate_handling, aggr_id_attribute)?;
+                    let sorted_output_keys = {
+                        let entries =
+                            gtf_entries
+                                .get(gtf_config.feature.as_str())
+                                .with_context(|| {
+                                    format!(
+                                        "No GTF entries found for feature {}",
+                                        gtf_config.feature
+                                    )
+                                })?;
+                        let keys: HashSet<_> = entries
+                            .vec_attributes
+                            .get(aggr_id_attribute)
+                            .context("No aggr_id_attribute found in GTF entries")?
+                            .iter()
+                            .collect();
+                        let mut keys: Vec<String> =
+                            keys.into_iter().map(|x| x.to_string()).collect();
+                        keys.sort();
+                        keys
+                    };
 
-
-                let sorted_output_keys = {
-                    let entries = gtf_entries
-                        .get(gtf_config.feature.as_str())
-                        .with_context(|| {
-                            format!("No GTF entries found for feature {}", gtf_config.feature)
-                        })?;
-                    let keys: HashSet<_> = entries
-                        .vec_attributes
-                        .get(aggr_id_attribute)
-                        .context("No aggr_id_attribute found in GTF entries")?
-                        .iter()
-                        .collect();
-                    let mut keys: Vec<String> = keys
-                        .into_iter()
-                        .map(|x| x.to_string())
-                        .collect();
-                    keys.sort();
-                    keys
-                };
-
-                (
-                    crate::engine::Engine::from_gtf(
-                        gtf_entries,
-                        gtf_config.feature.as_str(),
-                        gtf_config.id_attribute.as_str(),
-                        aggr_id_attribute,
-                        filters,
-                        self.clone(),
-                    )?,
-                    Some(sorted_output_keys),
-                    aggr_id_attribute.to_string()
-                )
-            }
-            crate::config::Source::BamReferences => {
-                let bam = rust_htslib::bam::Reader::from_path(input.bam.as_str())
-                    .context("Failed to open BAM file")?;
-                let header = bam.header();
-                let references: Result<Vec<(String, u64)>> = header
-                    .target_names()
-                    .iter()
-                    .enumerate()
-                    .map(|(tid, name)| {
-                        Ok((
-                            std::str::from_utf8(name)
-                                .context("reference name was'nt utf8")?
-                                .to_string(),
-                            header
-                                .target_len(tid as u32)
-                                .context("No length for tid?!")?,
-                        ))
-                    })
-                    .collect();
-                let references = references?;
-                let sorted_output_keys: Vec<String> =
-                    references.iter().map(|(name, _)| name.clone()).collect();
-                (
-                    crate::engine::Engine::from_references(references, filters, self.clone())?,
-                    Some(sorted_output_keys),
-                    "reference".to_string(),
-                )
-            }
-
-            crate::config::Source::BamTag(crate::config::BamTag { tag }) => {
-                if self.reverse() {
-                    bail!("Setting Direction(=reverse) on a BamTag is meaningless.")
+                    (
+                        crate::engine::Engine::from_gtf(
+                            gtf_entries,
+                            gtf_config.feature.as_str(),
+                            gtf_config.id_attribute.as_str(),
+                            aggr_id_attribute,
+                            filters,
+                            self.clone(),
+                        )?,
+                        Some(sorted_output_keys),
+                        aggr_id_attribute.to_string(),
+                    )
                 }
-                (
-                    crate::engine::Engine::from_bam_tag(tag, filters, self.clone()),
-                    None,
-                    std::str::from_utf8(&tag)
-                        .context("Bam tag was not valid utf8")?.to_string(),
-                )
-            }
-        };
+                crate::config::Source::BamReferences => {
+                    let bam = rust_htslib::bam::Reader::from_path(input.bam.as_str())
+                        .context("Failed to open BAM file")?;
+                    let header = bam.header();
+                    let references: Result<Vec<(String, u64)>> = header
+                        .target_names()
+                        .iter()
+                        .enumerate()
+                        .map(|(tid, name)| {
+                            Ok((
+                                std::str::from_utf8(name)
+                                    .context("reference name was'nt utf8")?
+                                    .to_string(),
+                                header
+                                    .target_len(tid as u32)
+                                    .context("No length for tid?!")?,
+                            ))
+                        })
+                        .collect();
+                    let references = references?;
+                    let sorted_output_keys: Vec<String> =
+                        references.iter().map(|(name, _)| name.clone()).collect();
+                    (
+                        crate::engine::Engine::from_references(references, filters, self.clone())?,
+                        Some(sorted_output_keys),
+                        "reference".to_string(),
+                    )
+                }
+
+                crate::config::Source::BamTag(crate::config::BamTag { tag }) => {
+                    if self.reverse() {
+                        bail!("Setting Direction(=reverse) on a BamTag is meaningless.")
+                    }
+                    (
+                        crate::engine::Engine::from_bam_tag(tag, filters, self.clone()),
+                        None,
+                        std::str::from_utf8(&tag)
+                            .context("Bam tag was not valid utf8")?
+                            .to_string(),
+                    )
+                }
+            };
 
         let counts = engine.quantify_bam(
             &input.bam,
             None,
             &output.directory,
             output.write_annotated_bam,
+            input.max_skip_length,
         )?;
 
         Self::write_output(
