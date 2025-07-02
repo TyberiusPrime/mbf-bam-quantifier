@@ -18,7 +18,7 @@ impl Quant for UnstrandedBasic {
         &self,
         annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
     ) -> Result<()> {
-        for (read, org_index) in annotated_reads.iter_mut() {
+        for (read, _org_index) in annotated_reads.iter_mut() {
             match read {
                 AnnotatedRead::Counted(read) => {
                     for gene_id in read.genes_hit_reverse.keys() {
@@ -53,6 +53,7 @@ impl Quant for StrandedBasic {
             Direction::Reverse => true,
         }
     }
+
     fn weight_read_group(
         &self,
         _annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],

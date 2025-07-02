@@ -1,6 +1,6 @@
 use enum_dispatch::enum_dispatch;
 
-#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize, PartialEq,Eq)]
 enum KeepOrRemove {
     #[serde(alias = "keep")]
     Keep,
@@ -19,6 +19,8 @@ pub trait ReadFilter: Send + Sync {
 pub enum Filter {
     #[serde(alias = "multimapper")]
     MultiMapper(MultiMapper),
+    #[serde(alias = "non_primary")]
+    NonPrimary(NonPrimary),
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -47,5 +49,19 @@ impl ReadFilter for MultiMapper {
             KeepOrRemove::Keep => !hit,
             KeepOrRemove::Remove => hit,
         }
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct NonPrimary {
+    action: KeepOrRemove,
+}
+
+impl ReadFilter for NonPrimary {
+    fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
+        if read.is_secondary() {
+            return self.action == KeepOrRemove::Remove;
+        }
+        false
     }
 }

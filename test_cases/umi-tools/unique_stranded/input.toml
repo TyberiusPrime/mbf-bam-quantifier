@@ -1,0 +1,32 @@
+[input]
+	bam = "input.bam"
+
+
+[input.source]
+   type ="gtf"
+   filename = "input.gtf.gz"
+   feature = 'exon'
+   id_attribute = 'gene_id'
+   aggr_id_attribute = 'gene_id'
+
+[umi]
+    type = "read_region"
+	start = 0
+	stop = 6
+
+[[filter]]
+	mode = "non_primary"
+	action = "remove"
+
+[quant]
+	mode = "stranded_umi"
+	direction = 'Forward'
+	umi_grouping = "unique"
+
+
+[output]
+	directory = 'output'
+#write_annotated_bam  = true
+
+
+

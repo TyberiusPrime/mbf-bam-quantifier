@@ -1,5 +1,6 @@
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Deserializer};
+use serde_valid::Validate;
 
 pub fn regex_from_string<'de, D>(deserializer: D) -> core::result::Result<regex::Regex, D::Error>
 where
@@ -22,7 +23,10 @@ pub trait UMIExtractor {
 pub enum UMIExtraction {
     NoUMI(NoUMI),
     #[serde(alias = "regex_name")]
-    RegexName(UMIExtractionRegexName),
+    RegexName(RegexName),
+
+    #[serde(alias = "read_region")]
+    ReadRegion(ReadRegion),
 }
 
 impl Default for UMIExtraction {
@@ -43,16 +47,42 @@ impl UMIExtractor for NoUMI {
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct UMIExtractionRegexName {
+pub struct RegexName {
     #[serde(deserialize_with = "regex_from_string")]
     regex: regex::Regex,
 }
 
-impl UMIExtractor for UMIExtractionRegexName {
+impl UMIExtractor for RegexName {
     fn extract(&self, read: &rust_htslib::bam::record::Record) -> Option<String> {
         let name = std::str::from_utf8(read.qname()).ok()?;
         self.regex
             .captures(name)
             .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+    }
+}
+
+fn validate_start_stop_rang(start: u16, stop: u16) -> Result<(), serde_valid::validation::Error> {
+    if start >= stop {
+        Err(serde_valid::validation::Error::Custom(
+            "start must be less than stop".to_string(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+#[derive(serde::Deserialize, Debug, Clone, Validate)]
+#[serde(deny_unknown_fields)]
+#[validate(custom = |s| validate_start_stop_rang(s.start, s.stop))]
+pub struct ReadRegion {
+    start: u16,
+    stop: u16
+}
+
+
+impl UMIExtractor for ReadRegion {
+    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Option<String> {
+        let seq = read.seq().as_bytes()[self.start as usize..self.stop as usize]
+            .to_vec();
+        Some(String::from_utf8(seq).ok()?)
     }
 }

@@ -50,6 +50,9 @@ pub enum Quantification {
 
     #[serde(alias = "unstranded_umi")]
     UnstrandedUMI(umi::UnstrandedUMI), 
+
+    #[serde(alias = "stranded_umi")]
+    StrandedUMI(umi::StrandedUMI), 
 }
 
 impl Quantification {

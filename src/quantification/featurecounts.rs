@@ -59,11 +59,11 @@ impl Quant for StrandedFeatureCounts {
     ) -> Result<()> {
         for (read, _org_index) in annotated_reads.iter_mut() {
             match read {
-                crate::engine::AnnotatedRead::Counted(read) => {
-                    if read.genes_hit_correct.len() == 1 {
+                crate::engine::AnnotatedRead::Counted(info) => {
+                    if info.genes_hit_correct.len() == 1 {
                         //we keep the read, count it as 1.
                     } else {
-                        read.genes_hit_correct.clear();
+                        *read = crate::engine::AnnotatedRead::FilteredInQuant
                     }
                 }
                 _ => {

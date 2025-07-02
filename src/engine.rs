@@ -139,6 +139,7 @@ impl IntervalResult {
 
 pub enum AnnotatedRead {
     Filtered,
+    FilteredInQuant,
     NotInRegion,
     Counted(AnnotatedReadInfo),
     Duplicate,
@@ -149,7 +150,7 @@ pub struct AnnotatedReadInfo {
     pub genes_hit_correct: HashMap<String, f32>, //todo: optimize!
     pub genes_hit_reverse: HashMap<String, f32>, //todo: optimize!
     pub umi: Option<String>,     // Optional: What's it's UMI.
-    pub barcode: Option<String>, // Optional: What's it's cellbarcode
+    // pub barcode: Option<String>, // Optional: What's it's cell-barcode
     pub mapping_priority: (u8, u8),
 }
 
@@ -356,7 +357,7 @@ impl Engine {
                         .count();
 
                     //annotated_reads.retain(|read| matches!(read, AnnotatedRead::Counted(_)));
-                    annotated_reads.sort_by_key(|(read, org_index)| match read {
+                    annotated_reads.sort_by_key(|(read, _org_index)| match read {
                         AnnotatedRead::Counted(info) => info.corrected_position as u64,
                         _ => u32::MAX as u64 + 1,
                     });
@@ -364,7 +365,7 @@ impl Engine {
                     let mut last_pos = None;
                     let mut change_indices = Vec::new();
                     let mut found_filtered = false;
-                    for (ii, (read, org_index)) in annotated_reads.iter().enumerate() {
+                    for (ii, (read, _org_index)) in annotated_reads.iter().enumerate() {
                         let info = match read {
                             AnnotatedRead::Counted(info) => info,
                             _ => {
@@ -395,6 +396,7 @@ impl Engine {
                         match read {
                             AnnotatedRead::Duplicate
                             | AnnotatedRead::Filtered
+                            | AnnotatedRead::FilteredInQuant
                             | AnnotatedRead::NotInRegion => {}
                             AnnotatedRead::Counted(info) => {
                                 for (gene, weight) in &info.genes_hit_correct {
@@ -501,7 +503,7 @@ impl Engine {
                     genes_hit_correct: genes_hit_correct.into_iter().map(|id| (id, 1.0)).collect(),
                     genes_hit_reverse: genes_hit_reverse.into_iter().map(|id| (id, 1.0)).collect(),
                     umi: self.umi_extractor.extract(&read),
-                    barcode: None,
+                    // barcode: None,
                     mapping_priority: (
                         read.no_of_mapping_coordinates().try_into().unwrap_or(255),
                         read.mapq(),
@@ -548,35 +550,43 @@ impl Engine {
             if let Some(&anno_read) = idx_to_annotated.get(&ii) {
                 match anno_read {
                     AnnotatedRead::NotInRegion => continue,
-                    AnnotatedRead::Filtered => {}
+                    AnnotatedRead::Filtered => {
+                        read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(1))?;
+                    }
+                    AnnotatedRead::FilteredInQuant => {
+                        read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(2))?;
+                    }
                     AnnotatedRead::Duplicate => {
-                        read.push_aux(b"XD", rust_htslib::bam::record::Aux::U8(1))?;
+                        read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(3))?;
                     }
                     AnnotatedRead::Counted(info) => {
                         //we have a read that was annotated
                         //write it to the output bam
                         let mut tag = String::new();
                         let mut first = true;
-                        for (gene, weight) in &info.genes_hit_correct {
+
+                        for gene in info.genes_hit_correct.keys().sorted() {
+                            let weight = *info.genes_hit_correct.get(gene).unwrap();
                             if !first {
                                 tag.push(',')
                             }
                             first = false;
                             tag.push_str(&format!("{}={:.2}", gene, weight));
                         }
-                        read.push_aux(b"XQ", rust_htslib::bam::record::Aux::String(&tag))?;
+                        read.replace_aux(b"XQ", rust_htslib::bam::record::Aux::String(&tag))?;
 
                         let mut tag = String::new();
                         let mut first = true;
-                        for (gene, weight) in &info.genes_hit_reverse {
+                        for gene in info.genes_hit_reverse.keys().sorted() {
+                            let weight = *info.genes_hit_reverse.get(gene).unwrap();
                             if !first {
                                 tag.push(',')
                             }
                             first = false;
                             tag.push_str(&format!("{}={:.2}", gene, weight));
                         }
-                        read.push_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
-                        read.push_aux(b"XP", rust_htslib::bam::record::Aux::U32(
+                        read.replace_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
+                        read.replace_aux(b"XP", rust_htslib::bam::record::Aux::U32(
                             info.corrected_position as u32,
                         ))?;
                     }
@@ -677,10 +687,6 @@ pub struct TreeMatcher {
     reference_to_aggregation_trees: HashMap<String, (OurTree, Vec<String>)>,
 }
 
-enum ReadOut {
-    Weight(Vec<(u32, f64)>, Vec<(u32, f64)>),
-    Filtered(Vec<u32>, Vec<u32>),
-}
 
 impl TreeMatcher {
     fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Vec<Chunk> {

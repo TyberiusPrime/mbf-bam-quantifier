@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use rust_htslib::bam;
 use rust_htslib::bam::ext::BamRecordExtensions as htslib_record_extensions;
 
@@ -10,6 +11,7 @@ pub trait BamRecordExtensions {
     fn corrected_pos(&self, max_skip_len: u32) -> i64;
 
     fn no_of_mapping_coordinates(&self) -> u32;
+    fn replace_aux(&mut self, tag: &[u8], value: bam::record::Aux) -> Result<()>;
 }
 
 impl BamRecordExtensions for bam::Record {
@@ -57,6 +59,19 @@ impl BamRecordExtensions for bam::Record {
         } else {
             1 // we can't tell.
         }
+    }
+
+    fn replace_aux(&mut self, tag: &[u8], value: bam::record::Aux) -> Result<()> {
+        let has_aux = self.aux_iter().any(|res| match res {
+            Ok((present_tag, _value)) => present_tag == tag,
+            Err(_) => false,
+        });
+        if has_aux {
+            self.remove_aux(tag).context("failed to remove tag")?;
+        }
+        self.push_aux(tag, value)
+            .context("failed to push aux tag (after removing)")?;
+        Ok(())
     }
 }
 

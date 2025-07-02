@@ -18,3 +18,5 @@ repeated exons in the source file multiple times, but sets all their reads to 0.
 
 
 
+document tags in write_output_bam
+XF 1 = filtered, 2 = filtered by quant, 3 = duplicate...
