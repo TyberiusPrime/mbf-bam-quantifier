@@ -5,7 +5,8 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_valid::Validate;
 
 use crate::quantification::{Quant, Quantification};
 
@@ -26,14 +27,6 @@ pub struct Input {
     pub source: Source,
 }
 
-fn default_aggr_feature() -> String {
-    "gene".to_string()
-}
-
-fn default_aggr_id_attribute() -> String {
-    "gene_id".to_string()
-}
-
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 #[serde(tag = "type")]
@@ -42,6 +35,29 @@ pub enum Source {
     GTF(GTFConfig),
     #[serde(alias = "bam_references")]
     BamReferences,
+    #[serde(alias = "bam_tag")]
+    BamTag(BamTag),
+}
+
+fn deser_tag<'de, D>(deserializer: D) -> core::result::Result<[u8; 2], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    let b = s.as_bytes();
+    if b.len() != 2 || b[0] != b[0].to_ascii_uppercase() || b[1] != b[1].to_ascii_uppercase() {
+        return Err(serde::de::Error::custom(format!(
+            "Tag must be exactle two uppercase letters"
+        )))?;
+    }
+    Ok([b[0], b[1]])
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct BamTag {
+    #[serde(deserialize_with = "deser_tag")]
+    pub tag: [u8; 2],
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize, Copy)]

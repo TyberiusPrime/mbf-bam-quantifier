@@ -1,14 +1,17 @@
 use std::{collections::HashSet, io::Write, path::Path};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use enum_dispatch::enum_dispatch;
-use rust_htslib::bam::Read;
+use rust_htslib::bam::{Read};
 
 use crate::{
     config::{Config, Input, Output},
     engine::IntervalResult,
 };
 use serde::{Deserialize, Serialize};
+
+mod basic;
+mod featurecounts;
 
 #[enum_dispatch(Quantification)]
 pub trait Quant: Send + Sync + Clone {
@@ -38,14 +41,14 @@ pub trait Quant: Send + Sync + Clone {
 #[enum_dispatch]
 pub enum Quantification {
     #[serde(alias = "unstranded_basic")]
-    UnstrandedBasic(UnstrandedBasic),
+    UnstrandedBasic(basic::UnstrandedBasic),
     #[serde(alias = "stranded_basic")]
-    StrandedBasic(StrandedBasic),
+    StrandedBasic(basic::StrandedBasic),
 
     #[serde(alias = "unstranded_featurecounts")]
-    UnstrandedFeatureCounts(UnstrandedFeatureCounts),
+    UnstrandedFeatureCounts(featurecounts::UnstrandedFeatureCounts),
     #[serde(alias = "stranded_featurecounts")]
-    StrandedFeatureCounts(StrandedFeatureCounts),
+    StrandedFeatureCounts(featurecounts::StrandedFeatureCounts),
 }
 
 impl Quantification {
@@ -58,7 +61,10 @@ impl Quantification {
         // Here you would implement the quantification logic
         // For now, we just return Ok to indicate success
         //
-        let (engine, sorted_output_keys, output_title) = match input.source {
+        let (engine, sorted_output_keys, output_title): (
+        _, Option<Vec<String>>, String)
+
+        = match input.source {
             crate::config::Source::GTF(ref gtf_config) => {
                 let aggr_id_attribute = gtf_config
                     .aggr_id_attribute
@@ -76,7 +82,7 @@ impl Quantification {
                         .with_context(|| {
                             format!("No GTF entries found for feature {}", gtf_config.feature)
                         })?;
-                    let mut keys: HashSet<_> = entries
+                    let keys: HashSet<_> = entries
                         .vec_attributes
                         .get(aggr_id_attribute)
                         .context("No aggr_id_attribute found in GTF entries")?
@@ -99,8 +105,8 @@ impl Quantification {
                         filters,
                         self.clone(),
                     )?,
-                    sorted_output_keys,
-                    aggr_id_attribute
+                    Some(sorted_output_keys),
+                    aggr_id_attribute.to_string()
                 )
             }
             crate::config::Source::BamReferences => {
@@ -127,8 +133,20 @@ impl Quantification {
                     references.iter().map(|(name, _)| name.clone()).collect();
                 (
                     crate::engine::Engine::from_references(references, filters, self.clone())?,
-                    sorted_output_keys,
-                    "reference",
+                    Some(sorted_output_keys),
+                    "reference".to_string(),
+                )
+            }
+
+            crate::config::Source::BamTag(crate::config::BamTag { tag }) => {
+                if self.reverse() {
+                    bail!("Setting Direction(=reverse) on a BamTag is meaningless.")
+                }
+                (
+                    crate::engine::Engine::from_bam_tag(tag, filters, self.clone()),
+                    None,
+                    std::str::from_utf8(&tag)
+                        .context("Bam tag was not valid utf8")?.to_string(),
                 )
             }
         };
@@ -144,7 +162,7 @@ impl Quantification {
             sorted_output_keys,
             counts,
             &output.directory.join("counts.tsv"),
-            output_title,
+            &output_title,
             self.output_only_one_column(),
         )?;
 
@@ -152,13 +170,19 @@ impl Quantification {
     }
 
     fn write_output(
-        sorted_keys: Vec<String>,
+        sorted_keys: Option<Vec<String>>,
         content: IntervalResult,
         output_filename: &Path,
         id_attribute: &str,
         first_column_only: bool,
     ) -> Result<()> {
         ex::fs::create_dir_all(&output_filename.parent().unwrap())?;
+
+        let sorted_keys = sorted_keys.unwrap_or_else(|| {
+            let mut keys: Vec<_> = content.counts.keys().cloned().collect();
+            keys.sort();
+            keys
+        });
 
         let output_file = ex::fs::File::create(&output_filename)?;
         let mut out_buffer = std::io::BufWriter::new(output_file);
@@ -192,163 +216,10 @@ impl Quantification {
     }
 }
 
-/// count every read that matches. That means a read can count for multiple
-/// regions
-#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct UnstrandedBasic {}
-
-impl Quant for UnstrandedBasic {
-    fn output_only_one_column(&self) -> bool {
-        true
-    }
-
-    fn weight_read(
-        &mut self,
-        _read: &rust_htslib::bam::record::Record,
-        gene_nos_seen_match: &HashSet<u32>,
-        gene_nos_seen_reverse: &HashSet<u32>,
-    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
-        let mut res = Vec::new();
-        res.extend(gene_nos_seen_match.iter().map(|&id| (id, 1.0)));
-        for id in gene_nos_seen_reverse {
-            if !gene_nos_seen_match.contains(id) {
-                res.push((*id, 1.0));
-            }
-        }
-        (res, Vec::new())
-    }
-}
-
 #[derive(Deserialize, Debug, Clone, Serialize)]
 enum Direction {
     #[serde(alias = "forward")]
     Forward,
     #[serde(alias = "reverse")]
     Reverse,
-}
-
-/// count every read that matches. That means a read can count for multiple
-/// regions. Considers strandedness.
-#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StrandedBasic {
-    direction: Direction,
-}
-
-impl Quant for StrandedBasic {
-    fn reverse(&self) -> bool {
-        match self.direction {
-            Direction::Forward => false,
-            Direction::Reverse => true,
-        }
-    }
-
-    fn weight_read(
-        &mut self,
-        _read: &rust_htslib::bam::record::Record,
-        gene_nos_seen_match: &HashSet<u32>,
-        gene_nos_seen_reverse: &HashSet<u32>,
-    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
-        (
-            gene_nos_seen_match
-                .iter()
-                .map(|&id| (id, 1.0))
-                .collect::<Vec<_>>(),
-            gene_nos_seen_reverse
-                .iter()
-                .map(|&id| (id, 1.0))
-                .collect::<Vec<_>>(),
-        )
-    }
-}
-
-/// count like featureCounts does.
-#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct UnstrandedFeatureCounts {}
-
-impl Quant for UnstrandedFeatureCounts {
-    fn output_only_one_column(&self) -> bool {
-        true
-    }
-
-    fn weight_read(
-        &mut self,
-        _read: &rust_htslib::bam::record::Record,
-        gene_nos_seen_match: &HashSet<u32>,
-        gene_nos_seen_reverse: &HashSet<u32>,
-    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
-        let combined = gene_nos_seen_match
-            .union(gene_nos_seen_reverse)
-            .cloned()
-            .collect::<HashSet<_>>();
-        if combined.len() == 1 {
-            //matches exactly one output region.
-            // Ok to count
-            return (
-                vec![(combined.iter().next().unwrap().clone(), 1.0)],
-                Vec::new(),
-            );
-        } else {
-            //matches multiple regions -> don't count
-            (
-                gene_nos_seen_match
-                    .iter()
-                    .map(|&id| (id, 0.0))
-                    .collect::<Vec<_>>(),
-                gene_nos_seen_reverse
-                    .iter()
-                    .map(|&id| (id, 0.0))
-                    .collect::<Vec<_>>(),
-            ) //(Vec::new(), Vec::new())
-        }
-    }
-}
-//
-// count like featureCounts does. Stranded
-#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StrandedFeatureCounts {
-    direction: Direction,
-}
-
-impl Quant for StrandedFeatureCounts {
-    fn reverse(&self) -> bool {
-        match self.direction {
-            Direction::Forward => false,
-            Direction::Reverse => true,
-        }
-    }
-
-    fn weight_read(
-        &mut self,
-        _read: &rust_htslib::bam::record::Record,
-        gene_nos_seen_match: &HashSet<u32>,
-        gene_nos_seen_reverse: &HashSet<u32>,
-    ) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
-        if gene_nos_seen_match.len() == 1 {
-            //matches exactly one output region.
-            // Ok to count
-            return (
-                gene_nos_seen_match
-                    .iter()
-                    .map(|&id| (id, 1.0))
-                    .collect::<Vec<_>>(),
-                gene_nos_seen_reverse
-                    .iter()
-                    .map(|&id| (id, 1.0))
-                    .collect::<Vec<_>>(),
-            );
-        } else {
-            //matches multiple regions -> don't count
-            (
-                Vec::new(),
-                gene_nos_seen_reverse
-                    .iter()
-                    .map(|&id| (id, 1.0))
-                    .collect::<Vec<_>>(),
-            )
-        }
-    }
 }

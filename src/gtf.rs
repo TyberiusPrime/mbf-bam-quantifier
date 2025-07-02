@@ -230,7 +230,7 @@ pub fn parse_minimal(
     let mut out: HashMap<String, GTFEntrys> = HashMap::new();
 
     for result in reader.record_bufs() {
-        let record = result?;
+        let record = result.context("GTF parsing failed")?;
 
         let feature = std::str::from_utf8(record.ty()).unwrap();
         if !out.contains_key(feature) {

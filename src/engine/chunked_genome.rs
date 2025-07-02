@@ -10,9 +10,9 @@ pub struct ChunkedGenome<'a> {
     chromosomes: Vec<String>,
 }
 
-impl <'a> ChunkedGenome<'a> {
+impl<'a> ChunkedGenome<'a> {
     ///create a new chunked genome for iteration
-    ///if you pass in a tree, it is guranteed that the splits happen
+    ///if you pass in a tree, it is guaranteed that the splits happen
     ///between entries of the tree, not inside.
     pub fn new(
         trees: &'a HashMap<String, (OurTree, Vec<String>)>,
@@ -72,6 +72,14 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    pub fn new(chr: String, tid: u32, start: u32, stop: u32) -> Chunk {
+        Chunk {
+            chr,
+            tid,
+            start,
+            stop,
+        }
+    }
     pub fn str_id(&self) -> String {
         format!("{}:{}:{}", self.chr, self.start, self.stop)
     }
