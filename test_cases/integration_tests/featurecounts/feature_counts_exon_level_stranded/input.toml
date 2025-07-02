@@ -6,7 +6,6 @@
    filename = "input.gtf.gz"
    feature = 'exon'
    id_attribute = 'exon_id'
-   aggr_feature = 'exon'
    aggr_id_attribute = 'exon_id'
    duplicate_handling= 'rename'
 

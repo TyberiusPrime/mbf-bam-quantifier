@@ -6,7 +6,6 @@
    filename = "input.gtf.gz"
    feature = 'exon'
    id_attribute = 'gene_id'
-   aggr_feature = 'gene'
    aggr_id_attribute = 'gene_id'
    duplicate_handling= 'collapse'
 

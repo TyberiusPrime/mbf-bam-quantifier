@@ -18,7 +18,7 @@ pub type OurTree = IntervalTree<u32, (u32, Strand)>;
 
 pub fn build_trees_from_gtf(
     id_attribute: &str,
-    gtf_entries: GTFEntrys,
+    gtf_entries: &GTFEntrys,
 ) -> Result<HashMap<String, (OurTree, Vec<String>)>> {
     let mut trees: HashMap<u32, OurTree> = HashMap::new();
     let mut gene_nos_by_chr = HashMap::new();
@@ -66,6 +66,58 @@ pub fn build_trees_from_gtf(
     res
 }
 
+//first merge interval sby id_attribute, then build the tree
+pub fn build_trees_from_gtf_merged(
+    id_attribute: &str,
+    gtf_entries: &GTFEntrys,
+) -> Result<HashMap<String, (OurTree, Vec<String>)>> {
+    let mut intervals: HashMap<u32, HashMap<String, (u32, u32)>> = HashMap::new();
+
+    for (seq_name_cat_id, gene_id, start, end, strand) in izip!(
+        gtf_entries.seqname.values.iter(),
+        gtf_entries
+            .vec_attributes
+            .get(id_attribute)
+            .context("Missing id attribute")?
+            .iter(),
+        gtf_entries.start.iter(),
+        gtf_entries.end.iter(),
+        gtf_entries.strand.iter(),
+    ) {
+        let by_chr_interval = intervals
+            .entry(*seq_name_cat_id)
+            .or_insert_with(HashMap::new);
+        let start: u32 = (*start)
+            .try_into()
+            .context("Start value is not a valid u32")?;
+        let end: u32 = (*end)
+            .try_into()
+            .context("Start value is not a valid u32")?;
+
+        match by_chr_interval.entry(gene_id.to_string()) {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let last = *e.get();
+                let new = ((start).min(last.0), (end).max(last.1));
+                *e.get_mut() = new;
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert((start, end));
+            }
+        }
+    }
+
+    let mut res = HashMap::new();
+    for (seq_name_cat_id, intervals) in intervals.iter() {
+        let seq_name = gtf_entries.seqname.cat_from_value(*seq_name_cat_id);
+        let mut tree = OurTree::new();
+        for (start, stop) in intervals.values() {
+            tree.insert(*start..*stop, (0, Strand::Unstranded));
+        }
+        res.insert(seq_name, (tree, vec!["ignored".to_string()]));
+    }
+    Ok(res)
+}
+
 #[derive(Debug)]
 pub struct IntervalResult {
     pub counts: HashMap<String, (f64, f64)>,
@@ -97,23 +149,30 @@ impl Engine {
         mut gtf_entries: HashMap<String, GTFEntrys>,
         entry_kind: &str,
         entry_id_attribute: &str,
-        aggregation_kind: &str,
         aggregation_id_attribute: &str,
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
     ) -> Result<Self> {
-        let split_entries = gtf_entries
-                .remove(aggregation_kind)
-                .with_context(||format!("No GTF entries found for split feature {}. Necessary to know where to split the genome productivly.", aggregation_kind))?;
-        let split_trees = build_trees_from_gtf(aggregation_id_attribute, split_entries)
-            .context("Failed to build split trees from GTF")?;
+        let feature_entries =  gtf_entries
+                .remove(entry_kind)
+                .with_context(||format!("No GTF entries found for feature {}. Necessary to know where to split the genome productivly.", entry_kind))?;
 
-        let feature_trees = if entry_kind == aggregation_kind {
+        let feature_trees = build_trees_from_gtf(aggregation_id_attribute, &feature_entries)
+            .context("Failed to build feature trees from GTF")?;
+
+        let split_trees = if aggregation_id_attribute == entry_id_attribute {
+            feature_trees.clone()
+        } else {
+            build_trees_from_gtf_merged(aggregation_id_attribute, &feature_entries)
+                .context("Failed to build split trees from GTF")?
+        };
+
+        let feature_trees = if entry_id_attribute == aggregation_id_attribute {
             split_trees.clone()
         } else {
             build_trees_from_gtf(
                 entry_id_attribute,
-                gtf_entries.remove(entry_kind).expect("unreachable"),
+                &gtf_entries.remove(entry_kind).expect("unreachable"),
             )
             .context("Failed to build feature trees")?
         };
@@ -130,31 +189,28 @@ impl Engine {
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
     ) -> Result<Self> {
-{
-        let mut trees: HashMap<String, (OurTree, Vec<String>)> = HashMap::new();
-        for( seq_name, length) in references.iter() {
+        {
+            let mut trees: HashMap<String, (OurTree, Vec<String>)> = HashMap::new();
+            for (seq_name, length) in references.iter() {
                 let mut tree = OurTree::new();
                 let start = 0;
                 let stop = *length as u32;
                 tree.insert(
-                    start..stop, //these are already 0-based
+                    start..stop,             //these are already 0-based
                     (0, Strand::Unstranded), // no gene numbers here, just a dummy
                 );
                 let genes_in_order = vec![seq_name.clone()];
                 trees.insert(seq_name.clone(), (tree, genes_in_order));
             }
 
-        Ok(Engine {
-            reference_to_count_trees: trees.clone(),
-            reference_to_aggregation_trees: trees,
-            filters,
-            quantifier,
-        })
-
-}
-
+            Ok(Engine {
+                reference_to_count_trees: trees.clone(),
+                reference_to_aggregation_trees: trees,
+                filters,
+                quantifier,
+            })
+        }
     }
-     
 
     pub fn quantify_bam(
         &self,

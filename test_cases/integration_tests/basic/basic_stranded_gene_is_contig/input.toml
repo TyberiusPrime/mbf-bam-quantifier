@@ -8,7 +8,6 @@
     filename = "input.gtf"
     feature = 'contig'
     id_attribute = 'contig_id'
-    aggr_feature = 'contig'
     aggr_id_attribute = 'contig_id'
 
 [[filter]]

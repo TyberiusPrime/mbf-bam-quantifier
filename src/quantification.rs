@@ -60,22 +60,31 @@ impl Quantification {
         //
         let (engine, sorted_output_keys, output_title) = match input.source {
             crate::config::Source::GTF(ref gtf_config) => {
-                let gtf_entries = input.read_gtf(
-                    gtf_config.duplicate_handling,
-                    gtf_config.aggr_id_attribute.as_str(),
-                )?;
+                let aggr_id_attribute = gtf_config
+                    .aggr_id_attribute
+                    .as_ref()
+                    .map(|x| x.as_str())
+                    .unwrap_or(gtf_config.id_attribute.as_str());
+
+                let gtf_entries =
+                    input.read_gtf(gtf_config.duplicate_handling, aggr_id_attribute)?;
+
+
                 let sorted_output_keys = {
                     let entries = gtf_entries
-                        .get(gtf_config.aggr_feature.as_str())
+                        .get(gtf_config.feature.as_str())
                         .with_context(|| {
                             format!("No GTF entries found for feature {}", gtf_config.feature)
                         })?;
-                    let mut keys: Vec<_> = entries
+                    let mut keys: HashSet<_> = entries
                         .vec_attributes
-                        .get(gtf_config.aggr_id_attribute.as_str())
+                        .get(aggr_id_attribute)
                         .context("No aggr_id_attribute found in GTF entries")?
                         .iter()
-                        .cloned()
+                        .collect();
+                    let mut keys: Vec<String> = keys
+                        .into_iter()
+                        .map(|x| x.to_string())
                         .collect();
                     keys.sort();
                     keys
@@ -86,13 +95,12 @@ impl Quantification {
                         gtf_entries,
                         gtf_config.feature.as_str(),
                         gtf_config.id_attribute.as_str(),
-                        gtf_config.aggr_feature.as_str(),
-                        gtf_config.aggr_id_attribute.as_str(),
+                        aggr_id_attribute,
                         filters,
                         self.clone(),
                     )?,
                     sorted_output_keys,
-                    gtf_config.aggr_id_attribute.as_str(),
+                    aggr_id_attribute
                 )
             }
             crate::config::Source::BamReferences => {
@@ -293,7 +301,7 @@ impl Quant for UnstrandedFeatureCounts {
                     .iter()
                     .map(|&id| (id, 0.0))
                     .collect::<Vec<_>>(),
-            )//(Vec::new(), Vec::new())
+            ) //(Vec::new(), Vec::new())
         }
     }
 }

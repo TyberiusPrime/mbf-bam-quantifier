@@ -64,10 +64,7 @@ pub struct GTFConfig {
     pub filename: String,
     pub feature: String,
     pub id_attribute: String,
-    #[serde(default = "default_aggr_feature")]
-    pub aggr_feature: String,
-    #[serde(default = "default_aggr_id_attribute")]
-    pub aggr_id_attribute: String,
+    pub aggr_id_attribute: Option<String>,
     #[serde(default)]
     pub duplicate_handling: DuplicateHandling,
 }
@@ -94,10 +91,14 @@ impl Input {
         duplication_detection_id_attribute: &str,
     ) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
         if let Source::GTF(gtf_config) = &self.source {
-            let accepted_features = vec![&gtf_config.feature, &gtf_config.aggr_feature];
+            let accepted_features = vec![&gtf_config.feature];
             let accepted_tags: HashSet<String> = vec![
                 gtf_config.id_attribute.to_string(),
-                gtf_config.aggr_id_attribute.to_string(),
+                gtf_config
+                    .aggr_id_attribute
+                    .as_ref()
+                    .unwrap_or(&gtf_config.id_attribute)
+                    .to_string(),
                 duplication_detection_id_attribute.to_string(),
             ]
             .into_iter()
