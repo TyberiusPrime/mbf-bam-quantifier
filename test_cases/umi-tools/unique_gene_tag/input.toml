@@ -1,11 +1,11 @@
 [input]
 	bam = "input_chr19_gene_tags.bam"
-	source.type = "bam_tag"
+	source.mode = "bam_tag"
     source.tag = 'XF'
 
 
 [umi]
-    type = "regex_name"
+    mode = "regex_name"
     regex = ":(UMI_[AGTC]+):"
 
 [strategy]

@@ -3,7 +3,7 @@
 	bam = "input.bam"
 
 [input.source]
-	type = "bam_references"
+	mode = "bam_references"
 
 [strategy]
 	direction = 'ignore'

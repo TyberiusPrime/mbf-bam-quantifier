@@ -17,11 +17,12 @@
 - compare to htseq
 - htseq also has a scrnaseq counter mode...
 
- - paired end handling
-   at least a filter read2 mode.
-
- -rename filter mode to type, or make it consistnent across all config
 
 - what happens whith multi mappers that map multiple times in one read
     - my old code didn't count them. think we should reimplement that...
     - perhaps by a filter on the AnnotatedReads...
+
+- gene level quantification for the non -position specific scRNAseqs..
+
+- write some documentation
+

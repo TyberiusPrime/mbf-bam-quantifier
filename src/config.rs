@@ -43,7 +43,7 @@ pub struct Input {
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
-#[serde(tag = "type")]
+#[serde(tag = "mode")]
 pub enum Source {
     #[serde(alias = "gtf")]
     GTF(GTFConfig),

@@ -3,14 +3,14 @@
 
 
 [input.source]
-   type ="gtf"
+   mode ="gtf"
    filename = "input.gtf.gz"
    feature = 'exon'
    id_attribute = 'gene_id'
    aggr_id_attribute = 'gene_id'
 
 [umi]
-    type = "read_region"
+    mode = "read_region"
 	start = 0
 	stop = 6
 

@@ -3,7 +3,7 @@
     bam = "input.bam"
 
 [input.source]
-	type = "gtf"
+	mode = "gtf"
     filename = "input.gtf"
     feature = 'contig'
     id_attribute = 'contig_id'

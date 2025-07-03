@@ -2,7 +2,7 @@
     bam = "input.bam"
 
 [input.source]
-   type ="gtf"
+   mode ="gtf"
    filename = "input.gtf.gz"
    feature = 'exon'
    id_attribute = 'gene_id'

@@ -18,7 +18,7 @@ pub trait UMIExtractor {
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
-#[serde(tag = "type")]
+#[serde(tag = "mode")]
 #[enum_dispatch]
 pub enum UMIExtraction {
     NoUMI(NoUMI),
