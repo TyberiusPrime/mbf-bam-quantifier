@@ -61,6 +61,15 @@ fn run_tests(test_dir: impl AsRef<Path>, continue_upon_failure: bool) -> Result<
 
     println!("Found {} test cases", test_cases.len());
     for test_case in test_cases {
+        if test_case.dir.join("skip").exists() {
+            println!(
+                "Skipping test case: {} (skip file present)",
+                test_case.dir.display()
+            );
+            continue;
+        }
+
+
         let repeat_count = fs::read_to_string(test_case.dir.join("repeat"))
             .map(|x| {
                 x.trim()
@@ -370,10 +379,6 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
         mismatched_files: Vec::new(),
         unexpected_files: Vec::new(),
     };
-    if test_case.dir.join("skip").exists() {
-        return Ok(result);
-    }
-
 
     let actual_dir = test_case.dir.join("actual");
     // Create actual directory and copy files
@@ -543,11 +548,13 @@ fn files_equal(file_a: PathBuf, file_b: PathBuf) -> Result<bool> {
         } else {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "Comparison script failed with stdout: {} error: {}",
+            println!(
+                "Comparison script failed for {} with stdout: {} error: {}",
+                file_a.display(),
                 stdout.trim(),
                 stderr.trim()
             );
+            return Ok(false)
         }
     }
     Ok(false)

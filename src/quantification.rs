@@ -93,12 +93,20 @@ impl Quantification {
                     keys
                 };
 
-                let output = engine::Output::new_per_region(
-                    output.directory.join("counts.tsv"),
-                    output.only_correct || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
-                    Some(sorted_output_keys),
-                    aggr_id_attribute.to_string(),
-                );
+                let output = if cell_barcode.is_some() {
+                    engine::Output::new_singlecell(
+                        output.directory.clone(),
+                        Some(sorted_output_keys),
+                    )?
+                } else {
+                    engine::Output::new_per_region(
+                        output.directory.join("counts.tsv"),
+                        output.only_correct
+                            || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
+                        Some(sorted_output_keys),
+                        aggr_id_attribute.to_string(),
+                    )
+                };
 
                 engine::Engine::from_gtf(
                     gtf_entries,
@@ -136,12 +144,20 @@ impl Quantification {
                 let sorted_output_keys: Vec<String> =
                     references.iter().map(|(name, _)| name.clone()).collect();
 
-                let output = engine::Output::new_per_region(
-                    output.directory.join("counts.tsv"),
-                    output.only_correct || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
-                    Some(sorted_output_keys),
-                    "reference".to_string(),
-                );
+                let output = if cell_barcode.is_some() {
+                    engine::Output::new_singlecell(
+                        output.directory.clone(),
+                        Some(sorted_output_keys),
+                    )?
+                } else {
+                    engine::Output::new_per_region(
+                        output.directory.join("counts.tsv"),
+                        output.only_correct
+                            || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
+                        Some(sorted_output_keys),
+                        "reference".to_string(),
+                    )
+                };
 
                 engine::Engine::from_references(
                     references,
@@ -159,14 +175,19 @@ impl Quantification {
                     bail!("Setting Direction(=reverse) on a BamTag is meaningless.")
                 }
 
-                let output = engine::Output::new_per_region(
-                    output.directory.join("counts.tsv"),
-                    output.only_correct || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
-                    None,
-                    std::str::from_utf8(&tag)
-                        .context("Bam tag name was not valid utf8")?
-                        .to_string(),
-                );
+                let output = if cell_barcode.is_some() {
+                    engine::Output::new_singlecell(output.directory.clone(), None)?
+                } else {
+                    engine::Output::new_per_region(
+                        output.directory.join("counts.tsv"),
+                        output.only_correct
+                            || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
+                        None,
+                        std::str::from_utf8(&tag)
+                            .context("Bam tag name was not valid utf8")?
+                            .to_string(),
+                    )
+                };
                 engine::Engine::from_bam_tag(
                     tag,
                     filters,

@@ -1,5 +1,6 @@
+use ex::Wrapper;
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
+use std::io::{BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 mod chunked_genome;
@@ -14,7 +15,7 @@ use bio::data_structures::interval_tree::IntervalTree;
 use chunked_genome::{Chunk, ChunkedGenome};
 use itertools::{izip, Itertools};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use rust_htslib::bam::{self, Read};
+use rust_htslib::bam::{self, Read as ReadTrait};
 
 use crate::gtf::GTFEntrys;
 pub type OurTree = IntervalTree<u32, (u32, Strand)>;
@@ -180,6 +181,13 @@ pub enum Output {
         first_column_only: bool,
         id_attribute: String,
     },
+    SingleCell {
+        output_pretfix: PathBuf,
+        features: HashMap<String, usize>,
+        barcodes: HashMap<Vec<u8>, usize>,
+        matrix_handle: Option<BufWriter<std::fs::File>>,
+        entry_count: usize,
+    },
 }
 
 impl Output {
@@ -210,6 +218,35 @@ impl Output {
             first_column_only,
             id_attribute,
         }
+    }
+
+    pub fn new_singlecell(
+        output_prefix: PathBuf,
+        sorted_keys: Option<Vec<String>>,
+    ) -> Result<Self> {
+        ex::fs::create_dir_all(&output_prefix).context("failed to create output directory")?;
+        let matrix_handle = BufWriter::new(
+            ex::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(output_prefix.join("matrix.mtx.temp"))
+                .context("Opening matrix output")?
+                .into_inner(),
+        );
+        let mut features = HashMap::new();
+        if let Some(sorted_keys) = sorted_keys.as_ref() {
+            for key in sorted_keys {
+                features.insert(key.clone(), features.len());
+            }
+        }
+        Ok(Output::SingleCell {
+            output_pretfix: output_prefix,
+            features,
+            barcodes: HashMap::new(),
+            matrix_handle: Some(matrix_handle),
+            entry_count: 0,
+        })
     }
 
     fn count_reads(&mut self, annotated_reads: &Vec<(AnnotatedRead, usize)>) -> Result<()> {
@@ -254,6 +291,64 @@ impl Output {
                             *stat_counter.get_mut("barcode_not_in_whitelist").unwrap() += 1
                         }
                     }
+                }
+            }
+            Output::SingleCell {
+                matrix_handle,
+                features,
+                barcodes,
+                entry_count,
+                ..
+            } => {
+                let mut out: HashMap<(usize, usize), f64> = HashMap::new();
+                for (read, _org_index) in annotated_reads {
+                    match read {
+                        AnnotatedRead::Counted(info) => {
+                            if let Some(barcode) = info.barcode.as_ref() {
+                                let barcodes_len = barcodes.len();
+                                let barcode_idx = match barcodes.entry(barcode.clone()) {
+                                    std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+                                    std::collections::hash_map::Entry::Vacant(e) => {
+                                        let new_index = barcodes_len;
+                                        e.insert(new_index);
+                                        new_index
+                                    }
+                                };
+                                for (gene, weight) in &info.genes_hit_correct {
+                                    let features_len = features.len();
+                                    let feature_idx = match features.entry(gene.clone()) {
+                                        std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+                                        std::collections::hash_map::Entry::Vacant(e) => {
+                                            let new_index = features_len;
+                                            e.insert(new_index);
+                                            new_index
+                                        }
+                                    };
+                                    out.entry((feature_idx, barcode_idx))
+                                        .and_modify(|e| *e += *weight as f64)
+                                        .or_insert(*weight as f64);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                //now these genes are fully measured, write them out
+                for ((feature_idx, barcode_idx), value) in out.into_iter() {
+                    *entry_count += 1;
+                    matrix_handle
+                        .as_mut()
+                        .unwrap()
+                        .write_all(
+                            format!(
+                                "{} {} {}\n",
+                                feature_idx + 1, // MatrixMarket is 1-based
+                                barcode_idx + 1, // MatrixMarket is 1-based
+                                value
+                            )
+                            .as_bytes(),
+                        )
+                        .context("Failed to write to matrix file")?;
                 }
             }
         }
@@ -310,6 +405,84 @@ impl Output {
 
                 Self::write_stats(&output_filename, &stat_counter)
                     .context("Failed to write stats file")?;
+            }
+            Output::SingleCell {
+                output_pretfix,
+                features,
+                barcodes,
+                mut matrix_handle,
+                entry_count,
+            } => {
+                let features_filename = output_pretfix.join("features.tsv");
+                let feature_len = features.len();
+                let sorted_features = {
+                    let mut temp = features
+                        .into_iter()
+                        .map(|(feature, index)| (index, feature))
+                        .collect::<Vec<_>>();
+                    temp.sort();
+                    temp
+                };
+                dbg!("feature count", sorted_features.len());
+                let mut feature_file =
+                    BufWriter::new(ex::fs::File::create(&features_filename)?.into_inner());
+                for (_, feature) in sorted_features {
+                    feature_file
+                        .write_all(format!("{}\n", feature).as_bytes())
+                        .context("Failed to write features to file")?;
+                }
+
+                let barcodes_filename = output_pretfix.join("barcodes.tsv");
+                let barcode_len = barcodes.len();
+                let sorted_barcodes = {
+                    let mut temp = barcodes
+                        .into_iter()
+                        .map(|(barcode, index)| (index, barcode))
+                        .collect::<Vec<_>>();
+                    temp.sort();
+                    temp
+                };
+                let mut barcode_file =
+                    BufWriter::new(ex::fs::File::create(&barcodes_filename)?.into_inner());
+                for (_, barcode) in sorted_barcodes {
+                    barcode_file
+                        .write_all(format!("{}\n", String::from_utf8_lossy(&barcode)).as_bytes())
+                        .context("Failed to write barcodes to file")?;
+                }
+                //matrix file has a header with nrow, ncols, nentries, so we need to push it into a
+                //new file.
+                let matrix_filename = output_pretfix.join("matrix.mtx");
+                let mut matrix_handle = matrix_handle.take().unwrap();
+                matrix_handle
+                    .flush()
+                    .context("Failed to flush matrix file")?;
+                let mut matrix_handle = matrix_handle
+                    .into_inner()
+                    .context("Could not retrieve file from bufwriter")?;
+
+                let mut matrix_out = ex::fs::File::create(&matrix_filename)?;
+                matrix_out.write_all(
+                    "%%MatrixMarket matrix coordinate integer general\n%\n".as_bytes(),
+                )?;
+                matrix_out
+                    .write_all(
+                        format!("{} {} {}\n", feature_len, barcode_len, entry_count,).as_bytes(),
+                    )
+                    .context("Failed to write header to matrix file")?;
+                matrix_handle.seek(std::io::SeekFrom::Start(0))?;
+                std::io::copy(&mut matrix_handle, &mut matrix_out)
+                    .context("Failed to copy matrix file content")?;
+                //remove temp file
+                let matrix_temp_filename = output_pretfix.join("matrix.mtx.temp");
+                if matrix_temp_filename.exists() {
+                    ex::fs::remove_file(&matrix_temp_filename)
+                        .context("Failed to remove temporary matrix file")?;
+                } else {
+                    bail!(
+                        "Temporary matrix file did not exist, what did we just copy?: {}",
+                        matrix_temp_filename.display()
+                    );
+                }
             }
         }
         Ok(())
@@ -608,6 +781,10 @@ impl Engine {
         if let Some((temp_dir, output_header)) = output_bam_info {
             combine_temporary_bams(&chunk_names, temp_dir, output_prefix, output_header)?;
         }
+        println!(
+            "Output written to: {}",
+            output_prefix.join("annotated.bam").display()
+        );
 
         Ok(())
     }
@@ -779,7 +956,8 @@ impl Engine {
                         read.replace_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
                         read.replace_aux(
                             b"XP",
-                            rust_htslib::bam::record::Aux::U32(info.corrected_position as u32),
+                            //convert back into sam's 1 based coordinates.
+                            rust_htslib::bam::record::Aux::U32(info.corrected_position + 1 as u32),
                         )?;
 
                         if let Some(cell_barcode) = info.barcode.as_ref() {

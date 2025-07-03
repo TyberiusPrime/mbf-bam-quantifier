@@ -30,3 +30,29 @@
 - add sam header for this program
 
 - do we really need float count values?
+
+
+- we need a sanity check that no gene interval is disjoint.
+
+
+
+- star solo parity:
+
+Zum einen interpretier ich nicht jeden read gleich?
+    ff-home:~/upstream/mbf-bam-quantifier/test_cases/starSolo_targeted
+    >samtools view actual/output/annotated.bam | grep -P "XQ:[^\t]+" -o | sort | uniq | wc -l
+    335
+                                                                                                        [ 0s026 | Jul 03 04:27PM ]
+
+     nix develop: /home/user/upstream/mbf-bam-quantifier/test_cases/starSolo_targeted/ 
+    ff-home:~/upstream/mbf-bam-quantifier/test_cases/starSolo_targeted
+    user>samtools view actual/output/annotated.bam | grep -P "GN:[^\t]+" -o | sort | uniq | wc -l
+    345
+
+Das scheinen alles 'schlecht alignierte' Reads zu sein - vermutlich irgendein
+filter in STAR den ich übersehe...
+
+das scheinen all
+
+- matrix output isn't stable.
+- I'll need to write it to chunk files to enforce an order, I'm afraid.

@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+
+import sys
+from pathlib import Path
+
+should  = sys.argv[1]
+actual = sys.argv[2]
+
+linesA = set([x.split("\t")[0] for x in Path(should).read_text().splitlines()])
+linesb = set([x.split("\t")[0] for x in Path(actual).read_text().splitlines()])
+
+if linesA == linesb:
+	print("The files are identical.")
+else:
+	print("The files differ.")
+	gained = linesb.difference(linesA)
+	print('gained', len(gained))
+	for k in sorted(gained)[:10]:
+		print("\t", k)
+	lost = linesA.difference(linesb)
+	print('lost', len(lost))
+	for k in sorted(lost)[:10]:
+		print("\t", k)
+	sys.exit(1)  # Exit with a non-zero status to indicate a difference
+

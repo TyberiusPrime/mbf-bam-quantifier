@@ -30,7 +30,7 @@
 
 [strategy]
 	multi_region = 'count_both'
-	direction = 'forward'
+	direction = 'ignore'
 
 [quant]
    mode = "sc"
