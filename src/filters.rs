@@ -22,6 +22,12 @@ pub enum Filter {
     MultiMapper(MultiMapper),
     #[serde(alias = "non_primary")]
     NonPrimary(NonPrimary),
+
+    #[serde(alias = "read1")]
+    Read1(Read1),
+    #[serde(alias = "read2")]
+    Read2(Read2),
+
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -48,6 +54,33 @@ pub struct NonPrimary {
 impl ReadFilter for NonPrimary {
     fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
         if read.is_secondary() {
+            return self.action == KeepOrRemove::Remove;
+        }
+        false
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct Read1 {
+    action: KeepOrRemove,
+}
+
+impl ReadFilter for Read1 {
+    fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
+        if read.is_first_in_template() {
+            return self.action == KeepOrRemove::Remove;
+        }
+        false
+    }
+}
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct Read2 {
+    action: KeepOrRemove,
+}
+
+impl ReadFilter for Read2 {
+    fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
+        if read.is_last_in_template() {
             return self.action == KeepOrRemove::Remove;
         }
         false
