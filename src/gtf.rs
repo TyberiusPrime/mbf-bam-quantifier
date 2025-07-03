@@ -1,5 +1,5 @@
-use crate::io::open_file;
-use anyhow::{Context, Result, bail};
+use crate::{config::GTFFormat, io::open_file};
+use anyhow::{bail, Context, Result};
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
@@ -130,6 +130,7 @@ impl Into<i8> for &Strand {
 // allocate every line at least once
 pub fn parse_minimal(
     filename: &str,
+    gff_or_gtf: GTFFormat,
     accepted_features: HashSet<String>,
     accepted_tags: HashSet<String>,
 ) -> Result<HashMap<String, GTFEntrys>> {
@@ -137,6 +138,7 @@ pub fn parse_minimal(
     let file = open_file(filename)?;
     let mut reader = LineReader::with_capacity(128 * 1024, file);
     let mut result = HashMap::new();
+    let mut gff_or_gtf = gff_or_gtf;
 
     while let Some(line) = reader.next_line() {
         let line = line.context("line reading error")?;
@@ -183,8 +185,21 @@ pub fn parse_minimal(
             .map(str::trim_start)
             .filter(|x| !x.is_empty());
         let mut tags = Vec::new();
+        let split_char = match gff_or_gtf {
+            GTFFormat::GTF => ' ',
+            GTFFormat::GFF => '=',
+            GTFFormat::AutoDetect => {
+                if attributes_str.contains('=') {
+                    gff_or_gtf = GTFFormat::GFF;
+                    '='
+                } else {
+                    gff_or_gtf = GTFFormat::GTF;
+                    ' '
+                }
+            }
+        };
         for attr_value in it {
-            let mut kv = attr_value.splitn(2, ' ');
+            let mut kv = attr_value.splitn(2, split_char);
             let key: &str = kv.next().unwrap();
             if !accepted_tags.contains(key) {
                 continue;
@@ -192,6 +207,7 @@ pub fn parse_minimal(
             let value: &str = kv.next().unwrap().trim_end().trim_matches('"');
             tags.push((key, value));
         }
+
         if !tags.is_empty() {
             let entry = result
                 .entry(feature_type.to_string())
@@ -216,6 +232,9 @@ pub fn parse_minimal(
                 }
             }
             entry.count += 1;
+        } else {
+            //todo change to warning
+            println!("Skipping GTF line because of missing tags. Is your GTF actually a GFF?. Current format: {:?}: {:?}. Tried to parse {:?}", line, gff_or_gtf, attributes_str);
         }
     }
     Ok(result)

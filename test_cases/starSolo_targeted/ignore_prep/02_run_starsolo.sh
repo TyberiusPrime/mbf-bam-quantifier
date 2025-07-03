@@ -14,6 +14,7 @@ STAR \
 	--outSAMunmapped Within \
 	--soloCBposition "0_0_0_8" "0_21_0_29" "0_43_0_51" \
 	--soloUMIposition "0_52_0_60" \
+	--soloUMIdedup Exact \
 	--soloCBmatchWLtype Exact \
 	--outFilterScoreMinOverLread 0 \
 	--outFilterMatchNminOverLread 0 \

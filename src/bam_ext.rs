@@ -8,7 +8,8 @@ pub trait BamRecordExtensions {
     #[allow(dead_code)] //todo: check
     fn introns(&self) -> Vec<(u32, u32)>;
 
-    fn corrected_pos(&self, max_skip_len: u32) -> i64;
+    ///return None on unaligned reads (pos = -1...)
+    fn corrected_pos(&self, max_skip_len: u32) -> Option<i64>;
 
     fn no_of_alignments(&self) -> u32;
     fn replace_aux(&mut self, tag: &[u8], value: bam::record::Aux) -> Result<()>;
@@ -26,10 +27,10 @@ impl BamRecordExtensions for bam::Record {
             .map(|x| (x[0] as u32, x[1] as u32))
             .collect()
     }
-    fn corrected_pos(&self, max_skip_len: u32) -> i64 {
+    fn corrected_pos(&self, max_skip_len: u32) -> Option<i64> {
         let p = self.pos();
         if p < 0 {
-            p
+            None
         } else {
             //it's always the leading ones... since the seq gets flipped
 
@@ -37,7 +38,7 @@ impl BamRecordExtensions for bam::Record {
             if skip > max_skip_len.into() {
                 panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?")
             }
-            p.saturating_sub(skip) as i64
+            Some(p.saturating_sub(skip) as i64)
         }
     }
     /// try to retrieve the number of mapping coordinates

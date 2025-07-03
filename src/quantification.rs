@@ -12,6 +12,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 mod basic;
+mod singlecells;
 mod umi;
 
 #[enum_dispatch(Quantification)]
@@ -41,6 +42,10 @@ pub enum Quantification {
     #[serde(alias = "umi")]
     UMI(umi::UMI),
 
+    #[serde(alias = "singlecell")]
+    #[serde(alias = "sc")]
+    SingleCell(singlecells::SingleCell),
+
 }
 
 impl Quantification {
@@ -50,6 +55,7 @@ impl Quantification {
         filters: Vec<crate::filters::Filter>,
         output: &Output,
         umi_extraction: UMIExtraction,
+        cell_barcode: Option<crate::barcodes::CellBarcodes>,
         strategy: crate::config::Strategy,
     ) -> anyhow::Result<()> {
         // Here you would implement the quantification logic
@@ -73,7 +79,7 @@ impl Quantification {
                                 .get(gtf_config.feature.as_str())
                                 .with_context(|| {
                                     format!(
-                                        "No GTF entries found for feature {}",
+                                        "No GTF entries found for feature {}. Perhaps set subformat to GFF/GTF? ",
                                         gtf_config.feature
                                     )
                                 })?;
@@ -98,6 +104,7 @@ impl Quantification {
                             filters,
                             self.clone(),
                             umi_extraction,
+                            cell_barcode,
                             strategy.clone(),
                         )?,
                         Some(sorted_output_keys),
@@ -132,6 +139,7 @@ impl Quantification {
                             filters,
                             self.clone(),
                             umi_extraction,
+                            cell_barcode,
                             strategy.clone(),
                         )?,
                         Some(sorted_output_keys),
@@ -149,6 +157,7 @@ impl Quantification {
                             filters,
                             self.clone(),
                             umi_extraction,
+                            cell_barcode,
                         ),
                         None,
                         std::str::from_utf8(&tag)
@@ -164,6 +173,7 @@ impl Quantification {
             &output.directory,
             output.write_annotated_bam,
             input.max_skip_length,
+            input.correct_reads_for_clipping
         )?;
 
         Self::write_output(
@@ -171,8 +181,8 @@ impl Quantification {
             counts,
             &output.directory.join("counts.tsv"),
             &output_title,
-            output.only_correct || 
-            matches!(&strategy.direction, crate::config::MatchDirection::Ignore),
+            output.only_correct
+                || matches!(&strategy.direction, crate::config::MatchDirection::Ignore),
         )?;
 
         Ok(())

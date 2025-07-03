@@ -1,14 +1,12 @@
 use crate::engine::AnnotatedRead;
 
-use super::{Quant};
+use super::Quant;
 use anyhow::Result;
 use std::collections::HashMap;
 
-
-
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
-enum UMIGrouping {
+pub enum UMIGrouping {
     #[serde(alias = "unique")]
     Unique,
 }
@@ -19,16 +17,13 @@ pub struct UMI {
     umi_grouping: UMIGrouping,
 }
 
-impl Quant for UMI {
-    fn weight_read_group(
-        &self,
-        annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
-    ) -> Result<()> {
-        match self.umi_grouping {
+impl UMIGrouping {
+    pub fn weight_read_group(&self, annotated_reads: &mut [(AnnotatedRead, usize)]) -> Result<()> {
+        match self {
             UMIGrouping::Unique => {
                 //just like umitools does it. group them by umi, then
                 //decide on a representative read
-                let mut by_umi: HashMap<&str, Vec<usize>> = HashMap::new();
+                let mut by_umi: HashMap<&[u8], Vec<usize>> = HashMap::new();
                 for (idx, (read, _org_idx)) in annotated_reads.iter().enumerate() {
                     if let AnnotatedRead::Counted(info) = read {
                         //extract the UMI
@@ -74,5 +69,13 @@ impl Quant for UMI {
             }
         }
         Ok(())
+    }
+}
+impl Quant for UMI {
+    fn weight_read_group(
+        &self,
+        annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
+    ) -> Result<()> {
+        self.umi_grouping.weight_read_group(annotated_reads)
     }
 }

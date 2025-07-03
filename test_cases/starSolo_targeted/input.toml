@@ -1,0 +1,41 @@
+[input]
+    bam = "input.bam"
+	correct_reads_for_clipping = false # starsolo doesn't. 
+
+[input.source]
+   mode ="gtf"
+   filename = "input.gtf.zst"
+   feature = 'exon'
+   id_attribute = 'gene_id'
+   aggr_id_attribute = 'gene_id'
+   duplicate_handling= 'collapse'
+
+[cell_barcodes]
+	extract = {mode = "Tag", tag = "CB"} # ugly..
+    separator_char = '_'
+	max_hamming = 0
+    whitelist_files = [
+		'input_BD_CLS1.txt',
+		'input_BD_CLS2.txt',
+		'input_BD_CLS3.txt',
+	]
+[umi]
+	mode = 'Tag'
+	tag = 'UB'
+
+
+# [[filter]]
+#     mode = "multimapper"
+#     action = "remove"
+
+[strategy]
+	multi_region = 'count_both'
+	direction = 'forward'
+
+[quant]
+   mode = "sc"
+   umi_grouping = 'unique'
+
+[output]
+    directory = 'output'
+    write_annotated_bam = true

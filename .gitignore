@@ -21,3 +21,4 @@ Session.vim
 tests/failures
 **/actual/**
 *bam.temp
+test_cases/starSolo_targeted/ignore_prep/

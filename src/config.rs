@@ -8,7 +8,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_valid::Validate;
 
-use crate::{extractors::UMIExtraction, quantification::{Quant, Quantification}};
+use crate::{extractors::UMIExtraction, quantification::{Quant, Quantification},
+barcodes::CellBarcodes};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +25,8 @@ pub struct Config {
     #[serde(alias = "UMI")]
     #[serde(default)]
     pub umi: UMIExtraction,
+
+    pub cell_barcodes: Option<CellBarcodes>,
     pub output: Output,
 }
 
@@ -32,10 +35,16 @@ fn default_max_skip_length() -> u32 {
     150 // should be a decent enough value for Illumina
 }
 
+fn default_correct_reads_for_clipping() -> bool {
+    true // this is the default in umi-tools
+} 
+
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     pub bam: String,
+    #[serde(default="default_correct_reads_for_clipping")]
+    pub correct_reads_for_clipping: bool,
     pub source: Source,
     #[serde(default="default_max_skip_length")]
     pub max_skip_length: u32,
@@ -53,7 +62,7 @@ pub enum Source {
     BamTag(BamTag),
 }
 
-fn deser_tag<'de, D>(deserializer: D) -> core::result::Result<[u8; 2], D::Error>
+pub fn deser_tag<'de, D>(deserializer: D) -> core::result::Result<[u8; 2], D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -148,10 +157,26 @@ pub struct Strategy {
     pub direction: MatchDirection
 }
 
+#[derive(Deserialize, Debug, Clone, Serialize, Copy)]
+#[serde(deny_unknown_fields)]
+pub enum GTFFormat {
+    AutoDetect,
+    GFF,
+    GTF
+}
+
+impl Default for GTFFormat {
+    fn default() -> Self {
+        GTFFormat::AutoDetect
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GTFConfig {
     pub filename: String,
+    #[serde(default)]
+    pub subformat: GTFFormat,
     pub feature: String,
     pub id_attribute: String,
     pub aggr_id_attribute: Option<String>,
@@ -173,6 +198,13 @@ pub struct Output {
 impl Config {
     pub fn check(&self) -> Result<()> {
         self.quantification.check(self)?;
+        Ok(())
+    }
+
+    pub fn init(&mut self) -> Result<()> {
+        if let Some(cb) = self.cell_barcodes .as_mut() {
+            cb.init()?;
+        }
         Ok(())
     }
 }
@@ -206,6 +238,7 @@ impl Input {
             )?; */
             let mut parsed = crate::gtf::parse_minimal(
                 &gtf_config.filename,
+                gtf_config.subformat,
                 accepted_features
                     .iter()
                     .map(|s| s.to_string())

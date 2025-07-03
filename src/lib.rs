@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 mod bam_ext;
+mod barcodes;
 mod categorical;
 mod config;
 mod engine;
@@ -19,7 +20,8 @@ pub fn run(toml_file: &Path) -> Result<()> {
     let mut parsed = toml::from_str::<Config>(&raw_config)
         .with_context(|| format!("Could not parse toml file: {}", toml_file.to_string_lossy()))?;
     parsed.check().context("Error in configuration")?;
-    
+    parsed.init()?;
+
     parsed
         .quantification
         .quantify(
@@ -27,6 +29,7 @@ pub fn run(toml_file: &Path) -> Result<()> {
             parsed.filter,
             &parsed.output,
             parsed.umi,
+            parsed.cell_barcodes,
             parsed.strategy,
         )
         .context("Error in quantification")?;

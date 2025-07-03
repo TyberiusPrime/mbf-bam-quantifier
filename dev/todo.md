@@ -1,6 +1,7 @@
 - smart exon tag counting like we do...
 
-- umitools comparisons
+- more umitools comparisons
+- more htseq comparisons.
 
 - star solo comparison tests
 
@@ -14,7 +15,6 @@
 - options to skip filtered / duplicates on write_output_bam, 
   for umi-tools feature parity?
 
-- compare to htseq
 - htseq also has a scrnaseq counter mode...
 
 
@@ -26,3 +26,8 @@
 
 - write some documentation
 
+
+- add sam header for this program
+
+
+ - we need to be able to pus errors from the worker threads

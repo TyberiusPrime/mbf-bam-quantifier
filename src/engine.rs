@@ -137,20 +137,23 @@ impl IntervalResult {
     }
 }
 
+#[derive(Debug)]
 pub enum AnnotatedRead {
     Filtered,
     //FilteredInQuant, might want to do tthis for strategy.multi_region hits?
     NotInRegion,
     Counted(AnnotatedReadInfo),
     Duplicate,
+    BarcodeNotInWhitelist,
 }
 
+#[derive(Debug)]
 pub struct AnnotatedReadInfo {
     pub corrected_position: u32, // clipping corrected position
     pub genes_hit_correct: HashMap<String, f32>, //todo: optimize!
     pub genes_hit_reverse: HashMap<String, f32>, //todo: optimize!
-    pub umi: Option<String>,     // Optional: What's it's UMI.
-    // pub barcode: Option<String>, // Optional: What's it's cell-barcode
+    pub umi: Option<Vec<u8>>,    // Optional: What's it's UMI.
+    pub barcode: Option<Vec<u8>>, // Optional: What's it's cell-barcode
     pub mapping_priority: (u8, u8),
 }
 
@@ -190,6 +193,7 @@ pub struct Engine {
     filters: Vec<crate::filters::Filter>,
     matcher: ReadToGeneMatcher,
     umi_extractor: crate::extractors::UMIExtraction,
+    cell_barcode: Option<crate::barcodes::CellBarcodes>,
 }
 
 impl Engine {
@@ -201,6 +205,7 @@ impl Engine {
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
         umi_extractor: crate::extractors::UMIExtraction,
+        cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
     ) -> Result<Self> {
         let feature_entries =  gtf_entries
@@ -236,6 +241,7 @@ impl Engine {
             filters,
             quantifier,
             umi_extractor,
+            cell_barcode,
         })
     }
     pub fn from_references(
@@ -243,6 +249,7 @@ impl Engine {
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
         umi_extractor: crate::extractors::UMIExtraction,
+        cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
     ) -> Result<Self> {
         let mut trees: HashMap<String, (OurTree, Vec<String>)> = HashMap::new();
@@ -267,6 +274,7 @@ impl Engine {
             filters,
             quantifier,
             umi_extractor,
+            cell_barcode,
         })
     }
 
@@ -275,6 +283,7 @@ impl Engine {
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
         umi_extractor: crate::extractors::UMIExtraction,
+        cell_barcode: Option<crate::barcodes::CellBarcodes>,
     ) -> Self {
         assert!(
             tag[0] == tag[0].to_ascii_uppercase(),
@@ -289,6 +298,7 @@ impl Engine {
             filters,
             quantifier,
             umi_extractor,
+            cell_barcode,
         }
     }
 
@@ -299,6 +309,7 @@ impl Engine {
         output_path: impl AsRef<Path>,
         write_output_bam: bool,
         max_skip_len: u32,
+        correct_reads_for_clipping: bool,
     ) -> Result<IntervalResult> {
         //check whether the bam file can be openend
         //and we need it for the chunking
@@ -328,6 +339,9 @@ impl Engine {
             false => None,
         };
         let chunks = self.matcher.generate_chunks(bam);
+        if chunks.is_empty() {
+            bail!("No chunks generated. This might be because the BAM file is empty or the matcher did not find any regions to quantify.");
+        }
         //perform the counting
         let chunk_names = chunks.iter().map(|c| c.str_id()).collect::<Vec<_>>();
 
@@ -346,6 +360,7 @@ impl Engine {
                             chunk.start,
                             chunk.stop,
                             max_skip_len,
+                            correct_reads_for_clipping,
                         )
                         .expect("Failure in quantification");
 
@@ -360,12 +375,26 @@ impl Engine {
                         .count();
 
                     //annotated_reads.retain(|read| matches!(read, AnnotatedRead::Counted(_)));
-                    annotated_reads.sort_by_key(|(read, _org_index)| match read {
-                        AnnotatedRead::Counted(info) => info.corrected_position as u64,
-                        _ => u32::MAX as u64 + 1,
+                    ////this is lifetime trouble
+                    /* annotated_reads.sort_by_key(|(read, _org_index)| match read {
+                        AnnotatedRead::Counted(info) => {
+                            (info.corrected_position as u64, info.barcode.as_ref())
+                        }
+                        _ => (u32::MAX as u64 + 1, None),
+                    }); */
+                    annotated_reads.sort_by(|a, b| match (&a.0, &b.0) {
+                        (AnnotatedRead::Counted(info_a), AnnotatedRead::Counted(info_b)) => info_a
+                            .corrected_position
+                            .cmp(&info_b.corrected_position)
+                            .then_with(|| info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref())),
+                        (AnnotatedRead::Counted(_), _) => std::cmp::Ordering::Less,
+                        (_, AnnotatedRead::Counted(_)) => std::cmp::Ordering::Greater,
+                        _ => std::cmp::Ordering::Equal,
                     });
 
                     let mut last_pos = None;
+                    //we can't do it without storing change_indices because we'd borrow
+                    //annotated_reads twice...
                     let mut change_indices = Vec::new();
                     let mut found_filtered = false;
                     for (ii, (read, _org_index)) in annotated_reads.iter().enumerate() {
@@ -399,8 +428,13 @@ impl Engine {
                         match read {
                             AnnotatedRead::Duplicate
                             | AnnotatedRead::Filtered
+                            | AnnotatedRead::BarcodeNotInWhitelist
                             //| AnnotatedRead::FilteredInQuant
-                            | AnnotatedRead::NotInRegion => {}
+                            | AnnotatedRead::NotInRegion => {
+                                //can we break here. Ordering says yes...
+                                break
+
+                            }
                             AnnotatedRead::Counted(info) => {
                                 for (gene, weight) in &info.genes_hit_correct {
                                     let entry =
@@ -463,6 +497,7 @@ impl Engine {
         start: u32,
         stop: u32,
         max_skip_len: u32,
+        correct_reads_for_clipping: bool,
     ) -> Result<Vec<(AnnotatedRead, usize)>> {
         let mut res = Vec::new();
 
@@ -479,13 +514,23 @@ impl Engine {
         'outer: while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
 
-            let corrected_position = read.corrected_pos(max_skip_len);
+            let corrected_position = if correct_reads_for_clipping {
+                read.corrected_pos(max_skip_len)
+            } else {
+                Some(read.pos())
+            };
 
-            if corrected_position >= 0 {
-                if ((corrected_position as u32) < start) || ((corrected_position as u32) >= stop) {
+            if let Some(corrected_position) = corrected_position {
+                if (
+                    (corrected_position as u32) < start && start > 0
+                    //reads in the first chunk, that would've started to the left are
+                    //also accepted
+                ) || ((corrected_position as u32) >= stop)
+                {
                     //this ensures we count a read only in the chunk where it's left most
                     //pos is in.
                     res.push((AnnotatedRead::NotInRegion, ii));
+                    ii += 1;
                     continue;
                 }
 
@@ -493,19 +538,36 @@ impl Engine {
                     if f.remove_read(&read) {
                         // if the read does not pass the filter, skip it
                         res.push((AnnotatedRead::Filtered, ii));
+                        ii += 1;
                         continue 'outer;
                     }
                 }
 
                 let (genes_hit_correct, genes_hit_reverse) =
                     self.matcher.hits(chr, start, stop, &read)?;
+                let barcode = {
+                    match { self.cell_barcode.as_ref() } {
+                        Some(cb) => {
+                            match cb.correct(&cb.extract(&read).expect("barcode extraction failed"))
+                            {
+                                Some(corrected_barcode) => Some(corrected_barcode),
+                                None => {
+                                    res.push((AnnotatedRead::BarcodeNotInWhitelist, ii));
+                                    ii += 1;
+                                    continue;
+                                }
+                            }
+                        }
+                        None => None,
+                    }
+                };
 
                 let info = AnnotatedReadInfo {
                     corrected_position: corrected_position as u32,
                     genes_hit_correct: genes_hit_correct.into_iter().map(|id| (id, 1.0)).collect(),
                     genes_hit_reverse: genes_hit_reverse.into_iter().map(|id| (id, 1.0)).collect(),
                     umi: self.umi_extractor.extract(&read),
-                    // barcode: None,
+                    barcode: barcode,
                     mapping_priority: (
                         read.no_of_alignments().try_into().unwrap_or(255),
                         read.mapq(),
@@ -514,7 +576,8 @@ impl Engine {
                 res.push((AnnotatedRead::Counted(info), ii));
                 ii += 1;
             } else {
-                panic!("Did not expect to see an unaligned read in a chunk");
+                panic!("Did not expect to see an unaligned read in a chunk: {:?}, pos: {}, cigar: {} - corrected to {:?}", 
+                    std::str::from_utf8(read.qname()).unwrap(), read.pos(), read.cigar(), read.corrected_pos(max_skip_len));
             }
         }
         Ok(res)
@@ -561,6 +624,9 @@ impl Engine {
                     AnnotatedRead::Duplicate => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(3))?;
                     }
+                    AnnotatedRead::BarcodeNotInWhitelist => {
+                        read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(4))?;
+                    }
                     AnnotatedRead::Counted(info) => {
                         //we have a read that was annotated
                         //write it to the output bam
@@ -592,6 +658,15 @@ impl Engine {
                             b"XP",
                             rust_htslib::bam::record::Aux::U32(info.corrected_position as u32),
                         )?;
+
+                        if let Some(cell_barcode) = info.barcode.as_ref() {
+                            read.replace_aux(
+                                b"CB",
+                                rust_htslib::bam::record::Aux::String(
+                                    std::str::from_utf8(cell_barcode).expect("barcode wasn't utf8"),
+                                ),
+                            )?;
+                        }
                     }
                 }
                 out_bam.write(&read)?;
@@ -731,21 +806,22 @@ impl TreeMatcher {
                 let entry = r.data();
                 let found_interval = r.interval();
                 let overlap_range = match self.count_strategy.overlap {
-                    crate::config::OverlapMode::Union => {
-                        HashSet::new()
-                    }
-                    _=> {
-                        (iv.0.max(found_interval.start)..iv.1.min(found_interval.end)).collect()
-                    }
-
+                    crate::config::OverlapMode::Union => HashSet::new(),
+                    _ => (iv.0.max(found_interval.start)..iv.1.min(found_interval.end)).collect(),
                 };
 
-                if std::str::from_utf8(read.qname()).unwrap() == "HWI-C00113:73:HVM2VBCXX:1:1209:15870:92336" {
+                if std::str::from_utf8(read.qname()).unwrap()
+                    == "HWI-C00113:73:HVM2VBCXX:1:1209:15870:92336"
+                {
                     dbg!(found_interval, iv);
                 }
                 let gene_no = entry.0;
                 let region_strand = entry.1;
-                let target = match (&self.count_strategy.direction, read.is_reverse(), region_strand) {
+                let target = match (
+                    &self.count_strategy.direction,
+                    read.is_reverse(),
+                    region_strand,
+                ) {
                     (MatchDirection::Forward, false, Strand::Plus) => &mut gene_nos_seen_match,
                     (MatchDirection::Forward, false, Strand::Minus) => &mut gene_nos_seen_reverse,
                     (MatchDirection::Forward, true, Strand::Plus) => &mut gene_nos_seen_reverse,
@@ -773,13 +849,16 @@ impl TreeMatcher {
                 }
                 crate::config::OverlapMode::IntersectionStrict => {
                     //only keep those that are fully contained in the region
-                    if std::str::from_utf8(read.qname()).unwrap() == "HWI-C00113:73:HVM2VBCXX:1:1209:15870:92336" {
+                    if std::str::from_utf8(read.qname()).unwrap()
+                        == "HWI-C00113:73:HVM2VBCXX:1:1209:15870:92336"
+                    {
                         dbg!(std::str::from_utf8(read.qname()).unwrap(), &gg);
                     }
                     gg.retain(|_, v| v.len() == bases_aligned as usize);
                 }
                 crate::config::OverlapMode::IntersectionNonEmpty => {
-                    let any_fully_contained = gg.values().any(|v| v.len() == bases_aligned as usize);
+                    let any_fully_contained =
+                        gg.values().any(|v| v.len() == bases_aligned as usize);
                     if any_fully_contained {
                         //only keep those that are fully contained in the region
                         gg.retain(|_, v| v.len() == bases_aligned as usize);
