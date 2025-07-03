@@ -14,10 +14,12 @@
     mode = "multimapper"
     action = "remove"
 
+[strategy]
+	multi_region = 'drop'
+	direction = 'reverse'
 
 [quant]
-   mode = "stranded_featurecounts"
-   direction = 'reverse'
+   mode = "basic"
 
 [output]
     directory = 'output'

@@ -139,7 +139,7 @@ impl IntervalResult {
 
 pub enum AnnotatedRead {
     Filtered,
-    FilteredInQuant,
+    //FilteredInQuant, might want to do tthis for strategy.multi_region hits?
     NotInRegion,
     Counted(AnnotatedReadInfo),
     Duplicate,
@@ -173,14 +173,13 @@ impl ReadToGeneMatcher {
         chunk_start: u32,
         chunk_stop: u32,
         read: &rust_htslib::bam::record::Record,
-        quant_is_reverse: bool,
     ) -> Result<(HashSet<String>, HashSet<String>)> {
         match self {
             ReadToGeneMatcher::TreeMatcher(matcher) => {
-                matcher.hits(chr, chunk_start, chunk_stop, read, quant_is_reverse)
+                matcher.hits(chr, chunk_start, chunk_stop, read)
             }
             ReadToGeneMatcher::TagMatcher(matcher) => {
-                matcher.hits(chr, chunk_start, chunk_stop, read, quant_is_reverse)
+                matcher.hits(chr, chunk_start, chunk_stop, read)
             }
         }
     }
@@ -202,6 +201,7 @@ impl Engine {
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
         umi_extractor: crate::extractors::UMIExtraction,
+        count_strategy: crate::config::Strategy,
     ) -> Result<Self> {
         let feature_entries =  gtf_entries
                 .remove(entry_kind)
@@ -231,6 +231,7 @@ impl Engine {
             matcher: ReadToGeneMatcher::TreeMatcher(TreeMatcher {
                 reference_to_count_trees: feature_trees,
                 reference_to_aggregation_trees: split_trees,
+                count_strategy,
             }),
             filters,
             quantifier,
@@ -242,6 +243,7 @@ impl Engine {
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
         umi_extractor: crate::extractors::UMIExtraction,
+        count_strategy: crate::config::Strategy,
     ) -> Result<Self> {
         let mut trees: HashMap<String, (OurTree, Vec<String>)> = HashMap::new();
         for (seq_name, length) in references.iter() {
@@ -260,6 +262,7 @@ impl Engine {
             matcher: ReadToGeneMatcher::TreeMatcher(TreeMatcher {
                 reference_to_count_trees: trees.clone(),
                 reference_to_aggregation_trees: trees,
+                count_strategy,
             }),
             filters,
             quantifier,
@@ -396,7 +399,7 @@ impl Engine {
                         match read {
                             AnnotatedRead::Duplicate
                             | AnnotatedRead::Filtered
-                            | AnnotatedRead::FilteredInQuant
+                            //| AnnotatedRead::FilteredInQuant
                             | AnnotatedRead::NotInRegion => {}
                             AnnotatedRead::Counted(info) => {
                                 for (gene, weight) in &info.genes_hit_correct {
@@ -495,8 +498,7 @@ impl Engine {
                 }
 
                 let (genes_hit_correct, genes_hit_reverse) =
-                    self.matcher
-                        .hits(chr, start, stop, &read, self.quantifier.reverse())?;
+                    self.matcher.hits(chr, start, stop, &read)?;
 
                 let info = AnnotatedReadInfo {
                     corrected_position: corrected_position as u32,
@@ -553,9 +555,9 @@ impl Engine {
                     AnnotatedRead::Filtered => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(1))?;
                     }
-                    AnnotatedRead::FilteredInQuant => {
+                    /* AnnotatedRead::FilteredInQuant => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(2))?;
-                    }
+                    } */
                     AnnotatedRead::Duplicate => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(3))?;
                     }
@@ -586,9 +588,10 @@ impl Engine {
                             tag.push_str(&format!("{}={:.2}", gene, weight));
                         }
                         read.replace_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
-                        read.replace_aux(b"XP", rust_htslib::bam::record::Aux::U32(
-                            info.corrected_position as u32,
-                        ))?;
+                        read.replace_aux(
+                            b"XP",
+                            rust_htslib::bam::record::Aux::U32(info.corrected_position as u32),
+                        )?;
                     }
                 }
                 out_bam.write(&read)?;
@@ -685,8 +688,8 @@ fn combine_temporary_bams(
 pub struct TreeMatcher {
     reference_to_count_trees: HashMap<String, (OurTree, Vec<String>)>,
     reference_to_aggregation_trees: HashMap<String, (OurTree, Vec<String>)>,
+    count_strategy: crate::config::Strategy,
 }
-
 
 impl TreeMatcher {
     fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Vec<Chunk> {
@@ -700,17 +703,18 @@ impl TreeMatcher {
         chunk_start: u32,
         chunk_stop: u32,
         read: &rust_htslib::bam::record::Record,
-        quant_is_reverse: bool,
     ) -> Result<(HashSet<String>, HashSet<String>)> {
-        //I think we need the chr to get the correc ttree.
+        use crate::config::MatchDirection;
         let (tree, gene_ids) = self
             .reference_to_count_trees
             .get(chr)
             .expect("Chr not found in trees");
         let blocks = read.blocks();
-        let mut gene_nos_seen_match = HashSet::<String>::new();
-        let mut gene_nos_seen_reverse = HashSet::<String>::new();
+        let mut gene_nos_seen_match = HashMap::<String, HashSet<u32>>::new();
+        let mut gene_nos_seen_reverse = HashMap::<String, HashSet<u32>>::new();
+        let mut bases_aligned = 0u32;
         for iv in blocks.iter() {
+            bases_aligned += iv.1 - iv.0;
             if (iv.1 < chunk_start)
                 || iv.0 >= chunk_stop
                 || ((iv.0 < chunk_start) && (iv.1 >= chunk_start))
@@ -725,24 +729,82 @@ impl TreeMatcher {
             }
             for r in tree.find(iv.0..iv.1) {
                 let entry = r.data();
-                let gene_no = entry.0;
-                let strand = entry.1;
-                let target = match (quant_is_reverse, read.is_reverse(), strand) {
-                    (false, false, Strand::Plus) => &mut gene_nos_seen_match,
-                    (false, false, Strand::Minus) => &mut gene_nos_seen_reverse,
-                    (false, true, Strand::Plus) => &mut gene_nos_seen_reverse,
-                    (false, true, Strand::Minus) => &mut gene_nos_seen_match,
+                let found_interval = r.interval();
+                let overlap_range = match self.count_strategy.overlap {
+                    crate::config::OverlapMode::Union => {
+                        HashSet::new()
+                    }
+                    _=> {
+                        (iv.0.max(found_interval.start)..iv.1.min(found_interval.end)).collect()
+                    }
 
-                    (true, false, Strand::Plus) => &mut gene_nos_seen_reverse,
-                    (true, false, Strand::Minus) => &mut gene_nos_seen_match,
-                    (true, true, Strand::Plus) => &mut gene_nos_seen_match,
-                    (true, true, Strand::Minus) => &mut gene_nos_seen_reverse,
-                    (_, _, Strand::Unstranded) => &mut gene_nos_seen_match,
                 };
-                target.insert(gene_ids[gene_no as usize].clone());
+
+                if std::str::from_utf8(read.qname()).unwrap() == "HWI-C00113:73:HVM2VBCXX:1:1209:15870:92336" {
+                    dbg!(found_interval, iv);
+                }
+                let gene_no = entry.0;
+                let region_strand = entry.1;
+                let target = match (&self.count_strategy.direction, read.is_reverse(), region_strand) {
+                    (MatchDirection::Forward, false, Strand::Plus) => &mut gene_nos_seen_match,
+                    (MatchDirection::Forward, false, Strand::Minus) => &mut gene_nos_seen_reverse,
+                    (MatchDirection::Forward, true, Strand::Plus) => &mut gene_nos_seen_reverse,
+                    (MatchDirection::Forward, true, Strand::Minus) => &mut gene_nos_seen_match,
+                    (MatchDirection::Forward, _, Strand::Unstranded) => &mut gene_nos_seen_match,
+
+                    (MatchDirection::Reverse, false, Strand::Plus) => &mut gene_nos_seen_reverse,
+                    (MatchDirection::Reverse, false, Strand::Minus) => &mut gene_nos_seen_match,
+                    (MatchDirection::Reverse, true, Strand::Plus) => &mut gene_nos_seen_match,
+                    (MatchDirection::Reverse, true, Strand::Minus) => &mut gene_nos_seen_reverse,
+                    (MatchDirection::Reverse, _, Strand::Unstranded) => &mut gene_nos_seen_match,
+                    (MatchDirection::Ignore, _, _) => &mut gene_nos_seen_match,
+                };
+                target
+                    .entry(gene_ids[gene_no as usize].clone())
+                    .and_modify(|e| e.extend(&overlap_range))
+                    .or_insert(overlap_range);
             }
         }
-        Ok((gene_nos_seen_match, gene_nos_seen_reverse))
+
+        for gg in [&mut gene_nos_seen_match, &mut gene_nos_seen_reverse] {
+            match self.count_strategy.overlap {
+                crate::config::OverlapMode::Union => {
+                    // do nothing, we keep them all
+                }
+                crate::config::OverlapMode::IntersectionStrict => {
+                    //only keep those that are fully contained in the region
+                    if std::str::from_utf8(read.qname()).unwrap() == "HWI-C00113:73:HVM2VBCXX:1:1209:15870:92336" {
+                        dbg!(std::str::from_utf8(read.qname()).unwrap(), &gg);
+                    }
+                    gg.retain(|_, v| v.len() == bases_aligned as usize);
+                }
+                crate::config::OverlapMode::IntersectionNonEmpty => {
+                    let any_fully_contained = gg.values().any(|v| v.len() == bases_aligned as usize);
+                    if any_fully_contained {
+                        //only keep those that are fully contained in the region
+                        gg.retain(|_, v| v.len() == bases_aligned as usize);
+                    } else {
+                        // keep all.
+                    }
+                }
+            }
+            match self.count_strategy.multi_region {
+                crate::config::MultiRegionHandling::Drop => {
+                    if gg.len() > 1 {
+                        // if there are multiple genes, drop them
+                        gg.clear();
+                    }
+                }
+                crate::config::MultiRegionHandling::CountBoth => {
+                    //do nothing.
+                }
+            }
+        }
+
+        Ok((
+            gene_nos_seen_match.into_keys().collect(),
+            gene_nos_seen_reverse.into_keys().collect(),
+        ))
     }
 }
 
@@ -786,7 +848,6 @@ impl TagMatcher {
         _start: u32,
         _stop: u32,
         read: &rust_htslib::bam::Record,
-        _quant_is_reverse: bool,
     ) -> Result<(HashSet<String>, HashSet<String>)> {
         let mut genes_hit_correct = HashSet::new();
         let genes_hit_reverse = HashSet::new();

@@ -13,8 +13,11 @@
     mode = "multimapper"
     action = "remove"
 
+[strategy]
+	direction = 'ignore'
+
 [quant]
-   mode = "unstranded_basic"
+   mode = "basic"
 
 
 [output]

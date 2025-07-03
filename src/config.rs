@@ -11,6 +11,7 @@ use serde_valid::Validate;
 use crate::{extractors::UMIExtraction, quantification::{Quant, Quantification}};
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub input: Input,
     #[serde(default)]
@@ -18,6 +19,8 @@ pub struct Config {
     #[serde(alias = "quant")]
     pub quantification: Quantification,
 
+    #[serde(default)]
+    pub strategy: Strategy,
     #[serde(alias = "UMI")]
     #[serde(default)]
     pub umi: UMIExtraction,
@@ -87,6 +90,66 @@ impl Default for DuplicateHandling {
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
+pub enum OverlapMode {
+    #[serde(alias = "union")]
+    Union,
+    #[serde(alias = "intersection_strict")]
+    IntersectionStrict,
+    #[serde(alias = "intersection_non_empty")]
+    IntersectionNonEmpty
+}
+
+impl Default for OverlapMode {
+    fn default() -> Self {
+        OverlapMode::Union
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub enum MultiRegionHandling {
+    #[serde(alias = "drop")]
+    Drop,
+    #[serde(alias = "count_both")]
+    CountBoth,
+}
+
+impl Default for MultiRegionHandling {
+    fn default() -> Self {
+        MultiRegionHandling::CountBoth
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub enum MatchDirection {
+    #[serde(alias = "forward")]
+    Forward,
+    #[serde(alias = "reverse")]
+    Reverse,
+    #[serde(alias = "ignore")]
+    Ignore
+}
+
+impl Default for MatchDirection {
+    fn default() -> Self {
+        MatchDirection::Forward
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Strategy {
+    #[serde(default)]
+    pub overlap: OverlapMode,
+    #[serde(default)]
+    pub multi_region: MultiRegionHandling,
+    #[serde(default)]
+    pub direction: MatchDirection
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GTFConfig {
     pub filename: String,
     pub feature: String,
@@ -102,6 +165,9 @@ pub struct Output {
     pub directory: PathBuf,
     #[serde(default)]
     pub write_annotated_bam: bool,
+    #[serde(default)]
+    pub only_correct: bool,
+
 }
 
 impl Config {

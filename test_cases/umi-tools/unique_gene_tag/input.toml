@@ -8,8 +8,11 @@
     type = "regex_name"
     regex = ":(UMI_[AGTC]+):"
 
+[strategy]
+	direction = 'ignore'
+
 [quant]
-	mode = "unstranded_umi"
+	mode = "umi"
 	umi_grouping = "unique"
 
 

@@ -18,9 +18,10 @@
 	mode = "non_primary"
 	action = "remove"
 
+# strategy.direction ='forward' is standard
+
 [quant]
-	mode = "stranded_umi"
-	direction = 'Forward'
+	mode = "umi"
 	umi_grouping = "unique"
 
 

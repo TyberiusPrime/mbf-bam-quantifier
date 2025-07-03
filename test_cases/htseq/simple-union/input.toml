@@ -9,18 +9,20 @@
    aggr_id_attribute = 'gene_id'
    duplicate_handling= 'collapse'
 
-
 [[filter]]
-    mode = "multimapper"
-    action = "remove"
+	mode = 'multimapper'
+	action ='remove'
+
 
 [strategy]
-	multi_region = 'drop'
-	direction = 'ignore'
+	direction = 'forward' # as is htseq default
+	overlap = 'union'
+    multi_region = 'drop'
 
 [quant]
    mode = "basic"
 
 [output]
     directory = 'output'
+    only_correct = true
     write_annotated_bam = false

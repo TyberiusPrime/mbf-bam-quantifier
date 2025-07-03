@@ -14,9 +14,11 @@
     mode = "multimapper"
     action = "remove"
 
-[quant]
-   mode = "stranded_basic"
+[strategy]
    direction ='forward'
+
+[quant]
+   mode = "basic"
 
 [output]
    directory = "output"

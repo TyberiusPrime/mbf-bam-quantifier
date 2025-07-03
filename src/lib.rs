@@ -19,10 +19,16 @@ pub fn run(toml_file: &Path) -> Result<()> {
     let mut parsed = toml::from_str::<Config>(&raw_config)
         .with_context(|| format!("Could not parse toml file: {}", toml_file.to_string_lossy()))?;
     parsed.check().context("Error in configuration")?;
-
+    
     parsed
         .quantification
-        .quantify(&parsed.input, parsed.filter, &parsed.output, parsed.umi)
+        .quantify(
+            &parsed.input,
+            parsed.filter,
+            &parsed.output,
+            parsed.umi,
+            parsed.strategy,
+        )
         .context("Error in quantification")?;
 
     Ok(())

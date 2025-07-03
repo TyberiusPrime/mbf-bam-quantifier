@@ -6,13 +6,13 @@ use rust_htslib::bam::Read;
 
 use crate::{
     config::{Config, Input, Output},
-    engine::IntervalResult, extractors::UMIExtraction,
+    engine::IntervalResult,
+    extractors::UMIExtraction,
 };
 use serde::{Deserialize, Serialize};
 
 mod basic;
-mod featurecounts;
-mod umi; 
+mod umi;
 
 #[enum_dispatch(Quantification)]
 pub trait Quant: Send + Sync + Clone {
@@ -20,12 +20,10 @@ pub trait Quant: Send + Sync + Clone {
         Ok(())
     }
 
-    fn output_only_one_column(&self) -> bool {
-        false
-    }
-
-    fn weight_read_group(&self, annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)])
-        -> Result<()>;
+    fn weight_read_group(
+        &self,
+        annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
+    ) -> Result<()>;
 
     /// whether forward /reverse matches should be swapped
     fn reverse(&self) -> bool {
@@ -37,22 +35,12 @@ pub trait Quant: Send + Sync + Clone {
 #[serde(tag = "mode")]
 #[enum_dispatch]
 pub enum Quantification {
-    #[serde(alias = "unstranded_basic")]
-    UnstrandedBasic(basic::UnstrandedBasic),
+    #[serde(alias = "basic")]
+    Basic(basic::Basic),
 
-    #[serde(alias = "stranded_basic")]
-    StrandedBasic(basic::StrandedBasic),
+    #[serde(alias = "umi")]
+    UMI(umi::UMI),
 
-    #[serde(alias = "unstranded_featurecounts")]
-    UnstrandedFeatureCounts(featurecounts::UnstrandedFeatureCounts),
-    #[serde(alias = "stranded_featurecounts")]
-    StrandedFeatureCounts(featurecounts::StrandedFeatureCounts),
-
-    #[serde(alias = "unstranded_umi")]
-    UnstrandedUMI(umi::UnstrandedUMI), 
-
-    #[serde(alias = "stranded_umi")]
-    StrandedUMI(umi::StrandedUMI), 
 }
 
 impl Quantification {
@@ -62,6 +50,7 @@ impl Quantification {
         filters: Vec<crate::filters::Filter>,
         output: &Output,
         umi_extraction: UMIExtraction,
+        strategy: crate::config::Strategy,
     ) -> anyhow::Result<()> {
         // Here you would implement the quantification logic
         // For now, we just return Ok to indicate success
@@ -108,7 +97,8 @@ impl Quantification {
                             aggr_id_attribute,
                             filters,
                             self.clone(),
-                            umi_extraction
+                            umi_extraction,
+                            strategy.clone(),
                         )?,
                         Some(sorted_output_keys),
                         aggr_id_attribute.to_string(),
@@ -137,9 +127,13 @@ impl Quantification {
                     let sorted_output_keys: Vec<String> =
                         references.iter().map(|(name, _)| name.clone()).collect();
                     (
-                        crate::engine::Engine::from_references(references, filters, self.clone(),
-                            umi_extraction
-                    )?,
+                        crate::engine::Engine::from_references(
+                            references,
+                            filters,
+                            self.clone(),
+                            umi_extraction,
+                            strategy.clone(),
+                        )?,
                         Some(sorted_output_keys),
                         "reference".to_string(),
                     )
@@ -150,9 +144,12 @@ impl Quantification {
                         bail!("Setting Direction(=reverse) on a BamTag is meaningless.")
                     }
                     (
-                        crate::engine::Engine::from_bam_tag(tag, filters, self.clone(),
-                            umi_extraction
-                    ),
+                        crate::engine::Engine::from_bam_tag(
+                            tag,
+                            filters,
+                            self.clone(),
+                            umi_extraction,
+                        ),
                         None,
                         std::str::from_utf8(&tag)
                             .context("Bam tag was not valid utf8")?
@@ -174,7 +171,8 @@ impl Quantification {
             counts,
             &output.directory.join("counts.tsv"),
             &output_title,
-            self.output_only_one_column(),
+            output.only_correct || 
+            matches!(&strategy.direction, crate::config::MatchDirection::Ignore),
         )?;
 
         Ok(())

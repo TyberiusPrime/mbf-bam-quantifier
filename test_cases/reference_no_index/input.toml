@@ -5,8 +5,11 @@
 [input.source]
 	type = "bam_references"
 
+[strategy]
+	direction ='ignore'
+
 [quantification]
-   mode = "unstranded_basic"
+   mode = "basic"
 
 
 [output]

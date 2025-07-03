@@ -14,9 +14,13 @@
     mode = "multimapper"
     action = "remove"
 
+
+[strategy]
+	multi_region = 'count_both'
+	direction = 'reverse'
+
 [quant]
-   mode = "stranded_basic"
-   direction ='Reverse'
+   mode = "basic"
 
 [output]
    directory = "output"
