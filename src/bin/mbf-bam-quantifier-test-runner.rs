@@ -370,6 +370,11 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
         mismatched_files: Vec::new(),
         unexpected_files: Vec::new(),
     };
+    if test_case.dir.join("skip").exists() {
+        return Ok(result);
+    }
+
+
     let actual_dir = test_case.dir.join("actual");
     // Create actual directory and copy files
     if actual_dir.exists() {

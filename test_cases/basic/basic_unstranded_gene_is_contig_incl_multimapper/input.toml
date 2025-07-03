@@ -19,3 +19,5 @@
 [output]
     directory = "output"
     write_annotated_bam=false
+
+# expect 6370 'missing' because they're not covered by the GTF! 

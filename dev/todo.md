@@ -29,5 +29,4 @@
 
 - add sam header for this program
 
-
- - we need to be able to pus errors from the worker threads
+- do we really need float count values?

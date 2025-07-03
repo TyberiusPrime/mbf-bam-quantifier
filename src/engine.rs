@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
@@ -119,25 +121,6 @@ pub fn build_trees_from_gtf_merged(
 }
 
 #[derive(Debug)]
-pub struct IntervalResult {
-    pub counts: HashMap<String, (f64, f64)>,
-    pub filtered: usize,
-    pub total: usize,
-    pub outside: usize,
-}
-
-impl IntervalResult {
-    fn new() -> Self {
-        IntervalResult {
-            counts: HashMap::new(),
-            filtered: 0,
-            total: 0,
-            outside: 0,
-        }
-    }
-}
-
-#[derive(Debug)]
 pub enum AnnotatedRead {
     Filtered,
     //FilteredInQuant, might want to do tthis for strategy.multi_region hits?
@@ -188,12 +171,177 @@ impl ReadToGeneMatcher {
     }
 }
 
+pub enum Output {
+    PerRegion {
+        output_filename: PathBuf,
+        counter: HashMap<String, (f64, f64)>,
+        stat_counter: HashMap<String, usize>,
+        sorted_keys: Option<Vec<String>>,
+        first_column_only: bool,
+        id_attribute: String,
+    },
+}
+
+impl Output {
+    pub fn new_per_region(
+        output_filename: PathBuf,
+        first_column_only: bool,
+        sorted_keys: Option<Vec<String>>,
+        id_attribute: String,
+    ) -> Self {
+        let stat_counter = [
+            ("ambiguous", 0),
+            ("correct", 0),
+            ("reverse", 0),
+            ("outside", 0),
+            ("duplicate", 0),
+            ("barcode_not_in_whitelist", 0),
+            ("filtered", 0),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+
+        Output::PerRegion {
+            output_filename,
+            counter: HashMap::new(),
+            stat_counter,
+            sorted_keys,
+            first_column_only,
+            id_attribute,
+        }
+    }
+
+    fn count_reads(&mut self, annotated_reads: &Vec<(AnnotatedRead, usize)>) -> Result<()> {
+        match self {
+            Output::PerRegion {
+                counter,
+                stat_counter,
+                ..
+            } => {
+                for (read, _org_index) in annotated_reads {
+                    match read {
+                        AnnotatedRead::Counted(info) => {
+                            match (
+                                info.genes_hit_correct.is_empty(),
+                                info.genes_hit_reverse.is_empty(),
+                            ) {
+                                (true, true) => {
+                                    *stat_counter.get_mut("outside").unwrap() += 1;
+                                }
+                                (false, true) => *stat_counter.get_mut("correct").unwrap() += 1,
+                                (true, false) => *stat_counter.get_mut("reverse").unwrap() += 1,
+                                (false, false) => *stat_counter.get_mut("ambiguous").unwrap() += 1,
+                            }
+                            for (gene, weight) in &info.genes_hit_correct {
+                                let entry = counter.entry(gene.to_string()).or_insert((0.0, 0.0));
+                                entry.0 += *weight as f64; // count forward
+                            }
+                            for (gene, weight) in &info.genes_hit_reverse {
+                                let entry = counter.entry(gene.to_string()).or_insert((0.0, 0.0));
+                                entry.1 += *weight as f64; // count reverse
+                            }
+                        }
+                        AnnotatedRead::Filtered => *stat_counter.get_mut("filtered").unwrap() += 1,
+                        AnnotatedRead::NotInRegion => {
+                            //these are 'accidential overfetches'
+                            //*stat_counter.get_mut("outside").unwrap() += 1
+                        }
+                        AnnotatedRead::Duplicate => {
+                            *stat_counter.get_mut("duplicate").unwrap() += 1
+                        }
+                        AnnotatedRead::BarcodeNotInWhitelist => {
+                            *stat_counter.get_mut("barcode_not_in_whitelist").unwrap() += 1
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<()> {
+        match self {
+            Output::PerRegion {
+                output_filename,
+                counter,
+                stat_counter,
+                first_column_only,
+                sorted_keys,
+                id_attribute,
+            } => {
+                ex::fs::create_dir_all(&output_filename.parent().unwrap())?;
+                let sorted_keys = sorted_keys.unwrap_or_else(|| {
+                    let mut keys: Vec<_> = counter.keys().cloned().collect();
+                    keys.sort();
+                    keys
+                });
+
+                let output_file = ex::fs::File::create(&output_filename)?;
+                let mut out_buffer = std::io::BufWriter::new(output_file);
+                if first_column_only {
+                    out_buffer
+                        .write_all(format!("{}\tcount\n", id_attribute).as_bytes())
+                        .context("Failed to write header to output file")?;
+                    for key in sorted_keys {
+                        let count = counter.get(&key).unwrap_or(&(0.0, 0.0)).0;
+                        out_buffer
+                            .write_all(format!("{}\t{}\n", key, count).as_bytes())
+                            .context("Failed to write counts to output file")?;
+                    }
+                } else {
+                    out_buffer
+                        .write_all(
+                            format!("{}\tcount_correct\tcount_reverse\n", id_attribute).as_bytes(),
+                        )
+                        .context("Failed to write header to output file")?;
+
+                    for key in sorted_keys {
+                        let (count_correct, count_reverse) =
+                            counter.get(&key).unwrap_or(&(0.0, 0.0));
+                        out_buffer
+                            .write_all(
+                                format!("{}\t{}\t{}\n", key, count_correct, count_reverse)
+                                    .as_bytes(),
+                            )
+                            .context("Failed to write counts to output file")?;
+                    }
+                }
+
+                Self::write_stats(&output_filename, &stat_counter)
+                    .context("Failed to write stats file")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn write_stats(output_filename: &PathBuf, stat_counter: &HashMap<String, usize>) -> Result<()> {
+        let stat_filename = output_filename.with_file_name(format!(
+            "{}.stats.tsv",
+            output_filename.file_name().unwrap().to_string_lossy()
+        ));
+        let output_file = ex::fs::File::create(&stat_filename)?;
+        let mut out_buffer = std::io::BufWriter::new(output_file);
+        out_buffer
+            .write_all(b"stat\tcount\n")
+            .context("Failed to write header to stats file")?;
+        let sorted_keys = stat_counter.keys().sorted();
+        for key in sorted_keys {
+            out_buffer
+                .write_all(format!("{}\t{}\n", key, stat_counter.get(key).unwrap()).as_bytes())
+                .context("Failed to write stats to file")?;
+        }
+        Ok(())
+    }
+}
+
 pub struct Engine {
     quantifier: Quantification,
     filters: Vec<crate::filters::Filter>,
     matcher: ReadToGeneMatcher,
     umi_extractor: crate::extractors::UMIExtraction,
     cell_barcode: Option<crate::barcodes::CellBarcodes>,
+    output: Arc<Mutex<Output>>,
 }
 
 impl Engine {
@@ -207,6 +355,7 @@ impl Engine {
         umi_extractor: crate::extractors::UMIExtraction,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
+        output: Output,
     ) -> Result<Self> {
         let feature_entries =  gtf_entries
                 .remove(entry_kind)
@@ -242,6 +391,7 @@ impl Engine {
             quantifier,
             umi_extractor,
             cell_barcode,
+            output: Arc::new(Mutex::new(output)),
         })
     }
     pub fn from_references(
@@ -251,6 +401,7 @@ impl Engine {
         umi_extractor: crate::extractors::UMIExtraction,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
+        output: Output,
     ) -> Result<Self> {
         let mut trees: HashMap<String, (OurTree, Vec<String>)> = HashMap::new();
         for (seq_name, length) in references.iter() {
@@ -275,6 +426,7 @@ impl Engine {
             quantifier,
             umi_extractor,
             cell_barcode,
+            output: Arc::new(Mutex::new(output)),
         })
     }
 
@@ -284,6 +436,7 @@ impl Engine {
         quantifier: Quantification,
         umi_extractor: crate::extractors::UMIExtraction,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
+        output: Output,
     ) -> Self {
         assert!(
             tag[0] == tag[0].to_ascii_uppercase(),
@@ -299,18 +452,19 @@ impl Engine {
             quantifier,
             umi_extractor,
             cell_barcode,
+            output: Arc::new(Mutex::new(output)),
         }
     }
 
     pub fn quantify_bam(
-        &self,
+        self,
         bam_path: impl AsRef<Path>,
         index_path: Option<&Path>,
         output_path: impl AsRef<Path>,
         write_output_bam: bool,
         max_skip_len: u32,
         correct_reads_for_clipping: bool,
-    ) -> Result<IntervalResult> {
+    ) -> Result<()> {
         //check whether the bam file can be openend
         //and we need it for the chunking
         let bam_filename = bam_path.as_ref();
@@ -347,9 +501,9 @@ impl Engine {
 
         let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
         let aggregated = pool.install(|| {
-            let result: IntervalResult = chunks
+            let result: Vec<Result<()>> = chunks
                 .into_par_iter()
-                .map(|chunk| -> IntervalResult {
+                .map(|chunk| -> Result<()> {
                     let mut bam =
                         crate::io::open_indexed_bam(bam_filename, index_filename).unwrap();
                     let mut annotated_reads = self
@@ -363,16 +517,6 @@ impl Engine {
                             correct_reads_for_clipping,
                         )
                         .expect("Failure in quantification");
-
-                    let filtered = annotated_reads
-                        .iter()
-                        .filter(|(read, _org_index)| matches!(read, AnnotatedRead::Filtered))
-                        .count();
-                    let total = annotated_reads.len();
-                    let outside = annotated_reads
-                        .iter()
-                        .filter(|(read, _org_index)| matches!(read, AnnotatedRead::NotInRegion))
-                        .count();
 
                     //annotated_reads.retain(|read| matches!(read, AnnotatedRead::Counted(_)));
                     ////this is lifetime trouble
@@ -423,32 +567,16 @@ impl Engine {
                             .expect("weighting failed");
                     }
 
-                    let mut counts: HashMap<String, (f64, f64)> = HashMap::new();
-                    for (read, _org_index) in &annotated_reads {
-                        match read {
-                            AnnotatedRead::Duplicate
-                            | AnnotatedRead::Filtered
-                            | AnnotatedRead::BarcodeNotInWhitelist
-                            //| AnnotatedRead::FilteredInQuant
-                            | AnnotatedRead::NotInRegion => {
-                                //can we break here. Ordering says yes...
-                                break
-
-                            }
-                            AnnotatedRead::Counted(info) => {
-                                for (gene, weight) in &info.genes_hit_correct {
-                                    let entry =
-                                        counts.entry(gene.to_string()).or_insert((0.0, 0.0));
-                                    entry.0 += *weight as f64; // count forward
-                                }
-                                for (gene, weight) in &info.genes_hit_reverse {
-                                    let entry =
-                                        counts.entry(gene.to_string()).or_insert((0.0, 0.0));
-                                    entry.1 += *weight as f64; // count reverse
-                                }
-                            }
+                    let lock = self.output.lock();
+                    match lock {
+                        Ok(mut output) => {
+                            output
+                                .count_reads(&annotated_reads)
+                                .context("Failed to count reads")?;
                         }
+                        Err(_) => bail!("Another thread panicked, output no longer available."),
                     }
+
                     if let Some((out_bam_path, header)) = output_bam_info.as_ref() {
                         Self::write_annotated_reads(
                             &mut bam,
@@ -460,33 +588,28 @@ impl Engine {
                         )
                         .expect("Failed to write output bam");
                     }
-                    //todo: bam writing...
-                    //
-                    IntervalResult {
-                        counts,
-                        filtered,
-                        total,
-                        outside,
-                    }
+                    Ok(())
                 })
-                .reduce(IntervalResult::new, Self::aggregate);
+                .collect();
             result
         });
+
+        if aggregated.iter().any(|r| r.is_err()) {
+            let errors: Vec<_> = aggregated.into_iter().filter_map(Result::err).collect();
+            bail!("Errors occurred during quantification: {:?}", errors);
+        }
+
+        let output = Arc::into_inner(self.output).context("Failed to retrieve output from arc")?;
+        let output = output
+            .into_inner()
+            .context("Failed to unlock output mutex")?;
+        output.finish()?;
 
         if let Some((temp_dir, output_header)) = output_bam_info {
             combine_temporary_bams(&chunk_names, temp_dir, output_prefix, output_header)?;
         }
 
-        Ok(aggregated)
-    }
-
-    fn aggregate(a: IntervalResult, b: IntervalResult) -> IntervalResult {
-        IntervalResult {
-            counts: add_dual_hashmaps(a.counts, b.counts),
-            filtered: a.filtered + b.filtered,
-            total: a.total + b.total,
-            outside: a.outside + b.outside,
-        }
+        Ok(())
     }
 
     fn annotate_reads(
@@ -810,11 +933,6 @@ impl TreeMatcher {
                     _ => (iv.0.max(found_interval.start)..iv.1.min(found_interval.end)).collect(),
                 };
 
-                if std::str::from_utf8(read.qname()).unwrap()
-                    == "HWI-C00113:73:HVM2VBCXX:1:1209:15870:92336"
-                {
-                    dbg!(found_interval, iv);
-                }
                 let gene_no = entry.0;
                 let region_strand = entry.1;
                 let target = match (
@@ -885,17 +1003,6 @@ impl TreeMatcher {
             gene_nos_seen_reverse.into_keys().collect(),
         ))
     }
-}
-
-fn add_dual_hashmaps(
-    mut a: HashMap<String, (f64, f64)>,
-    b: HashMap<String, (f64, f64)>,
-) -> HashMap<String, (f64, f64)> {
-    for (k, v) in b.iter() {
-        let x = a.entry(k.to_string()).or_insert((0., 0.));
-        *x = (x.0 + v.0, x.1 + v.1);
-    }
-    a
 }
 
 pub struct TagMatcher {
