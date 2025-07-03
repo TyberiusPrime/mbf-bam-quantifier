@@ -10,7 +10,7 @@ pub trait BamRecordExtensions {
 
     fn corrected_pos(&self, max_skip_len: u32) -> i64;
 
-    fn no_of_mapping_coordinates(&self) -> u32;
+    fn no_of_alignments(&self) -> u32;
     fn replace_aux(&mut self, tag: &[u8], value: bam::record::Aux) -> Result<()>;
 }
 
@@ -41,8 +41,8 @@ impl BamRecordExtensions for bam::Record {
         }
     }
     /// try to retrieve the number of mapping coordinates
-    /// for tihs read. Uses the NH tag. defaults to 1
-    fn no_of_mapping_coordinates(&self) -> u32 {
+    /// for this read. Uses the NH tag. defaults to 1
+    fn no_of_alignments(&self) -> u32 {
         //let's try the NH tag, as by the tag spec
         if let Ok(nh) = self.aux(b"NH") {
             match nh {

@@ -1,4 +1,5 @@
 use enum_dispatch::enum_dispatch;
+use crate::bam_ext::BamRecordExtensions;
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize, PartialEq,Eq)]
 enum KeepOrRemove {
@@ -30,21 +31,8 @@ pub struct MultiMapper {
 
 impl ReadFilter for MultiMapper {
     fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
-        use rust_htslib::bam::record::Aux;
-        let hit = match read.aux(b"NH") {
-            Ok(Aux::I8(value)) => value > 1,
-            Ok(Aux::I16(value)) => value > 1,
-            Ok(Aux::I32(value)) => value > 1,
-            Ok(Aux::U8(value)) => value > 1,
-            Ok(Aux::U16(value)) => value > 1,
-            Ok(Aux::U32(value)) => value > 1,
-
-            _ => {
-                panic!(
-                    "read had no NH tag (or wasn't an integer). Can't remove multi mappers. Aborting"
-                )
-            }
-        };
+        let alignment_count = read.no_of_alignments();
+        let hit = alignment_count > 1;
         match self.action {
             KeepOrRemove::Keep => !hit,
             KeepOrRemove::Remove => hit,

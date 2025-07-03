@@ -505,7 +505,7 @@ impl Engine {
                     umi: self.umi_extractor.extract(&read),
                     // barcode: None,
                     mapping_priority: (
-                        read.no_of_mapping_coordinates().try_into().unwrap_or(255),
+                        read.no_of_alignments().try_into().unwrap_or(255),
                         read.mapq(),
                     ),
                 };
