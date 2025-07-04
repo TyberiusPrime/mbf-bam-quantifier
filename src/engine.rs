@@ -711,7 +711,7 @@ impl Engine {
     }
 
     pub fn quantify_bam(
-        self,
+        mut self,
         bam_path: impl AsRef<Path>,
         index_path: Option<&Path>,
         output_path: impl AsRef<Path>,
@@ -724,6 +724,12 @@ impl Engine {
         let bam_filename = bam_path.as_ref();
         let index_filename: Option<&Path> = index_path;
         let bam = crate::io::open_indexed_bam(bam_filename, index_filename.as_ref())?;
+
+        let bam_header = bam.header();
+        for filter in self.filters.iter_mut() {
+            filter.init(bam_header).context("filter init failed")?;
+        }
+
         // prepare output bam (if requested)
         let output_prefix: &Path = output_path.as_ref();
         let output_bam_info = match write_output_bam {
@@ -746,10 +752,26 @@ impl Engine {
 
             false => None,
         };
-        let chunks = self.matcher.generate_chunks(bam);
-        if chunks.is_empty() {
-            bail!("No chunks generated. This might be because the BAM file is empty or the matcher did not find any regions to quantify.");
-        }
+        let chunks = {
+            let mut chunks = self.matcher.generate_chunks(bam);
+            if chunks.is_empty() {
+                bail!("No chunks generated. This might be because the BAM file is empty or the matcher did not find any regions to quantify.");
+            }
+            for f in self.filters.iter() {
+                if let crate::filters::Filter::Reference(reference_filter) = f {
+                    match reference_filter.action {
+                        crate::filters::KeepOrRemove::Keep => {
+                            chunks.retain(|c| reference_filter.references.contains(&c.chr));
+                        }
+                        crate::filters::KeepOrRemove::Remove => {
+                            chunks.retain(|c| !reference_filter.references.contains(&c.chr));
+                        }
+                    }
+                }
+            }
+            chunks
+        };
+
         //perform the counting
         let chunk_names = chunks.iter().map(|c| c.str_id()).collect::<Vec<_>>();
 

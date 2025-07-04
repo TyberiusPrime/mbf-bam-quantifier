@@ -1,8 +1,11 @@
+use std::collections::HashSet;
+use anyhow::{Context, Result};
+
 use crate::bam_ext::BamRecordExtensions;
 use enum_dispatch::enum_dispatch;
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize, PartialEq, Eq)]
-enum KeepOrRemove {
+pub enum KeepOrRemove {
     #[serde(alias = "keep")]
     Keep,
     #[serde(alias = "remove")]
@@ -11,6 +14,12 @@ enum KeepOrRemove {
 
 #[enum_dispatch(Filter)]
 pub trait ReadFilter: Send + Sync {
+
+    fn init(&mut self, _header: &rust_htslib::bam::HeaderView) -> Result<()>{
+        // Default implementation does nothing, can be overridden by specific filters
+        Ok(())
+    }
+
     fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool;
 }
 
@@ -30,6 +39,9 @@ pub enum Filter {
 
     #[serde(alias = "spliced")]
     Spliced(Spliced),
+
+    #[serde(alias = "reference")]
+    Reference(Reference)
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -107,3 +119,42 @@ impl ReadFilter for Spliced {
         }
     }
 }
+
+/// Filter references from processing.
+/// Note that unlike the other filters, this one will even filter them from output
+/// since we're leveraging this to filter the chunks we're looking at.
+/// (This way, we're both saving the time and the memory to process them,
+/// which can be a life safer if you've a file with a gazillion reads mapping to the same
+/// coordinates, for example phiX).
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize, serde_valid::Validate)]
+pub struct Reference {
+    pub action: KeepOrRemove,
+    #[validate(min_length = 1)]
+    pub references: Vec<String>,
+    #[serde(skip)]
+    tids: Option<HashSet<u32>>,
+}
+
+impl ReadFilter for Reference{
+    fn init(&mut self, header: &rust_htslib::bam::HeaderView) ->Result<()>{
+        let mut tids = HashSet::new();
+        for r in &self.references {
+            let tid = header.tid(r.as_bytes()).with_context(||format!("Reference not found in header: {r}"))?;
+            tids.insert(tid);
+        }
+        self.tids = Some(tids);
+        Ok(())
+    }
+    fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
+        false
+        /* has already been filtered by the chunk filtering
+        let hit = self.tids.as_ref().unwrap().contains(&(read.tid() as u32));
+        match self.action {
+            KeepOrRemove::Keep => !hit,
+            KeepOrRemove::Remove => hit,
+        }
+*/
+    }
+}
+
+
