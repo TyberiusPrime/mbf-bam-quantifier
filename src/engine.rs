@@ -126,7 +126,8 @@ pub enum AnnotatedRead {
     Filtered,
     //FilteredInQuant, might want to do tthis for strategy.multi_region hits?
     NotInRegion,
-    Counted(AnnotatedReadInfo),
+    Counted(Box<AnnotatedReadInfo>), // otherwise this is as large as AnnotatedReadInfo for each
+    // entry.
     Duplicate,
     NoBarcode,
     NoUMI,
@@ -135,12 +136,13 @@ pub enum AnnotatedRead {
 
 #[derive(Debug)]
 pub struct AnnotatedReadInfo {
-    pub corrected_position: u32, // clipping corrected position
-    pub genes_hit_correct: HashMap<String, f32>, //todo: optimize!
-    pub genes_hit_reverse: HashMap<String, f32>, //todo: optimize!
-    pub umi: Option<Vec<u8>>,    // Optional: What's it's UMI.
-    pub barcode: Option<Vec<u8>>, // Optional: What's it's cell-barcode
+    pub corrected_position: u32, // clipping corrected position 4 bytes
+    pub genes_hit_correct: HashMap<String, f32>, //todo: optimize! 48bytes.
+    pub genes_hit_reverse: HashMap<String, f32>, //todo: optimize! 48bytes.
+    pub umi: Option<Vec<u8>>,    // Optional: What's it's UMI. 24 bytes
+    pub barcode: Option<Vec<u8>>, // Optional: What's it's cell-barcode 24 bytes
     pub mapping_priority: (u8, u8),
+    pub reverse: bool,
 }
 
 pub enum ReadToGeneMatcher {
@@ -794,19 +796,14 @@ impl Engine {
                         )
                         .context("Failure in quantification")?;
 
-                    //annotated_reads.retain(|read| matches!(read, AnnotatedRead::Counted(_)));
-                    ////this is lifetime trouble
-                    /* annotated_reads.sort_by_key(|(read, _org_index)| match read {
-                        AnnotatedRead::Counted(info) => {
-                            (info.corrected_position as u64, info.barcode.as_ref())
-                        }
-                        _ => (u32::MAX as u64 + 1, None),
-                    }); */
+                    // we still need to establish the barcode sorting, even if
+                    // correct_reads_for_clipping is false
                     annotated_reads.sort_by(|a, b| match (&a.0, &b.0) {
-                        (AnnotatedRead::Counted(info_a), AnnotatedRead::Counted(info_b)) => info_a
-                            .corrected_position
-                            .cmp(&info_b.corrected_position)
-                            .then_with(|| info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref())),
+                        (AnnotatedRead::Counted(info_a), AnnotatedRead::Counted(info_b)) => {
+                            { info_a.corrected_position.cmp(&info_b.corrected_position) }
+                                .then_with(|| info_a.reverse.cmp(&info_b.reverse))
+                                .then_with(|| info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref()))
+                        }
                         (AnnotatedRead::Counted(_), _) => std::cmp::Ordering::Less,
                         (_, AnnotatedRead::Counted(_)) => std::cmp::Ordering::Greater,
                         _ => std::cmp::Ordering::Equal,
@@ -883,11 +880,11 @@ impl Engine {
 
         if let Some((temp_dir, output_header)) = output_bam_info {
             combine_temporary_bams(&chunk_names, temp_dir, output_prefix, output_header)?;
+            println!(
+                "Output written to: {}",
+                output_prefix.join("annotated.bam").display()
+            );
         }
-        println!(
-            "Output written to: {}",
-            output_prefix.join("annotated.bam").display()
-        );
 
         Ok(())
     }
@@ -903,6 +900,11 @@ impl Engine {
         correct_reads_for_clipping: bool,
     ) -> Result<Vec<(AnnotatedRead, usize)>> {
         let mut res = Vec::new();
+        let max_skip_len = if correct_reads_for_clipping {
+            max_skip_len
+        } else {
+            0
+        };
 
         let mut read: bam::Record = bam::Record::new();
         let mut ii = 0;
@@ -911,8 +913,9 @@ impl Engine {
             start as u64,
             (stop + max_skip_len) as u64, // this is a correctness issue
                                           // We'll read unnecessary reads here,
-                                          // just to discard them because their correceted position is beyond the region
-                                          // but there might be a read there that is.
+                                          // just to discard them because their corrected position is beyond the region
+                                          // but there might be a read there that is corrected to
+                                          // be within.
         ))?;
         'outer: while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
@@ -946,8 +949,6 @@ impl Engine {
                     }
                 }
 
-                let (genes_hit_correct, genes_hit_reverse) =
-                    self.matcher.hits(chr, start, stop, &read)?;
                 let barcode = {
                     match { self.cell_barcode.as_ref() } {
                         Some(cb) => {
@@ -993,9 +994,12 @@ impl Engine {
                         None => None,
                     }
                 };
+                let (genes_hit_correct, genes_hit_reverse) =
+                    self.matcher.hits(chr, start, stop, &read)?;
 
                 let info = AnnotatedReadInfo {
                     corrected_position: corrected_position as u32,
+                    reverse: read.is_reverse(),
                     genes_hit_correct: genes_hit_correct.into_iter().map(|id| (id, 1.0)).collect(),
                     genes_hit_reverse: genes_hit_reverse.into_iter().map(|id| (id, 1.0)).collect(),
                     umi: umi,
@@ -1005,7 +1009,7 @@ impl Engine {
                         read.mapq(),
                     ),
                 };
-                res.push((AnnotatedRead::Counted(info), ii));
+                res.push((AnnotatedRead::Counted(Box::new(info)), ii));
                 ii += 1;
             } else {
                 panic!("Did not expect to see an unaligned read in a chunk: {:?}, pos: {}, cigar: {} - corrected to {:?}", 

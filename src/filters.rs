@@ -145,7 +145,7 @@ impl ReadFilter for Reference{
         self.tids = Some(tids);
         Ok(())
     }
-    fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
+    fn remove_read(&self, _read: &rust_htslib::bam::record::Record) -> bool {
         false
         /* has already been filtered by the chunk filtering
         let hit = self.tids.as_ref().unwrap().contains(&(read.tid() as u32));
