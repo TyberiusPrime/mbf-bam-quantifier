@@ -4,5 +4,7 @@ barcode_not_in_whitelist	0
 correct	770
 duplicate	433
 filtered	0
+no_barcode	0
+no_umi	0
 outside	0
 reverse	0

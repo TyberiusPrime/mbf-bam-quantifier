@@ -2,7 +2,7 @@ STAR version=2.7.10b
 STAR compilation time,server,dir=1980-01-01T00:00:00+00:00 :/build/source/source
 STAR git: 
 ##### Command Line:
-STAR --genomeDir genome.star.index --genomeLoad NoSharedMemory --soloType CB_UMI_Complex --soloCBwhitelist ../input_BD_CLS1.txt ../input_BD_CLS2.txt ../input_BD_CLS3.txt --readFilesIn input_R2.fasta input_R1.fasta --outSAMattributes NH HI nM AS CR UR CB UB GX GN sS sQ sM --outSAMtype BAM SortedByCoordinate --outSAMunmapped Within --soloCBposition 0_0_0_8 0_21_0_29 0_43_0_51 --soloUMIposition 0_52_0_60 --soloUMIdedup Exact --soloCBmatchWLtype Exact --outFilterScoreMinOverLread 0 --outFilterMatchNminOverLread 0 --outFilterMultimapScoreRange 0 --seedSearchStartLmax 50 --clip3pAdapterSeq AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA -- outFileNamePrefix starsolo_out/
+STAR --genomeDir genome.star.index --genomeLoad NoSharedMemory --soloType CB_UMI_Complex --soloCBwhitelist ../input_BD_CLS1.txt ../input_BD_CLS2.txt ../input_BD_CLS3.txt --readFilesIn input_R2.fasta input_R1.fasta --outSAMattributes NH HI nM AS CR UR CB UB GX GN sS sQ sM --outSAMtype BAM SortedByCoordinate --outSAMunmapped Within --soloCBposition 0_0_0_8 0_21_0_29 0_43_0_51 --soloUMIposition 0_52_0_60 --soloUMIdedup Exact --outFilterMultimapNmax 1 --soloCBmatchWLtype Exact --outFilterScoreMinOverLread 0 --outFilterMatchNminOverLread 0 --outFilterMultimapScoreRange 0 --seedSearchStartLmax 50 --clip3pAdapterSeq AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA -- outFileNamePrefix starsolo_out/
 ##### Initial USER parameters from Command Line:
 outFileNamePrefix                 starsolo_out/
 ###### All USER parameters from Command Line:
@@ -17,6 +17,7 @@ outSAMunmapped                Within        ~RE-DEFINED
 soloCBposition                0_0_0_8   0_21_0_29   0_43_0_51        ~RE-DEFINED
 soloUMIposition               0_52_0_60     ~RE-DEFINED
 soloUMIdedup                  Exact        ~RE-DEFINED
+outFilterMultimapNmax         1     ~RE-DEFINED
 soloCBmatchWLtype             Exact     ~RE-DEFINED
 outFilterScoreMinOverLread    0     ~RE-DEFINED
 outFilterMatchNminOverLread   0     ~RE-DEFINED
@@ -34,6 +35,7 @@ outFileNamePrefix                 starsolo_out/
 outSAMtype                        BAM   SortedByCoordinate   
 outSAMattributes                  NH   HI   nM   AS   CR   UR   CB   UB   GX   GN   sS   sQ   sM   
 outSAMunmapped                    Within   
+outFilterMultimapNmax             1
 outFilterMultimapScoreRange       0
 outFilterScoreMinOverLread        0
 outFilterMatchNminOverLread       0
@@ -48,12 +50,12 @@ soloUMIposition                   0_52_0_60
 
 -------------------------------
 ##### Final effective command line:
-STAR   --genomeDir genome.star.index   --genomeLoad NoSharedMemory   --readFilesIn input_R2.fasta   input_R1.fasta      --outFileNamePrefix starsolo_out/   --outSAMtype BAM   SortedByCoordinate      --outSAMattributes NH   HI   nM   AS   CR   UR   CB   UB   GX   GN   sS   sQ   sM      --outSAMunmapped Within      --outFilterMultimapScoreRange 0   --outFilterScoreMinOverLread 0   --outFilterMatchNminOverLread 0   --clip3pAdapterSeq AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA      --seedSearchStartLmax 50   --soloType CB_UMI_Complex   --soloCBwhitelist ../input_BD_CLS1.txt   ../input_BD_CLS2.txt   ../input_BD_CLS3.txt      --soloUMIdedup Exact      --soloCBmatchWLtype Exact   --soloCBposition 0_0_0_8   0_21_0_29   0_43_0_51      --soloUMIposition 0_52_0_60
+STAR   --genomeDir genome.star.index   --genomeLoad NoSharedMemory   --readFilesIn input_R2.fasta   input_R1.fasta      --outFileNamePrefix starsolo_out/   --outSAMtype BAM   SortedByCoordinate      --outSAMattributes NH   HI   nM   AS   CR   UR   CB   UB   GX   GN   sS   sQ   sM      --outSAMunmapped Within      --outFilterMultimapNmax 1   --outFilterMultimapScoreRange 0   --outFilterScoreMinOverLread 0   --outFilterMatchNminOverLread 0   --clip3pAdapterSeq AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA      --seedSearchStartLmax 50   --soloType CB_UMI_Complex   --soloCBwhitelist ../input_BD_CLS1.txt   ../input_BD_CLS2.txt   ../input_BD_CLS3.txt      --soloUMIdedup Exact      --soloCBmatchWLtype Exact   --soloCBposition 0_0_0_8   0_21_0_29   0_43_0_51      --soloUMIposition 0_52_0_60
 ----------------------------------------
 
 Number of fastq files for each mate = 1
 ParametersSolo: --soloCellFilterType CellRanger2.2 filtering parameters:  3000 0.99 10
-Jul 03 12:22:47 ... Finished reading, sorting and deduplicating CB whitelist sequences.
+Jul 04 09:53:24 ... Finished reading, sorting and deduplicating CB whitelist sequences.
 WARNING: --limitBAMsortRAM=0, will use genome size as RAM limit for BAM sorting
 Finished loading and checking parameters
 Reading genome generation parameters:
@@ -609,7 +611,7 @@ Number of real (reference) chromosomes= 530
 529	Tyk2_ENSMUST00000001036.10_53294	220	138412032
 530	phiX174	5386	138674176
 --sjdbOverhang = 100 taken from the generated genome
-Started loading the genome: Thu Jul  3 12:22:47 2025
+Started loading the genome: Fri Jul  4 09:53:24 2025
 
 Genome: size given as a parameter = 138936320
 SA: size given as a parameter = 1162065
@@ -623,84 +625,84 @@ Loading Genome ... done! state: good=1 eof=0 fail=0 bad=0; loaded 138936320 byte
 SA file size: 1162065 bytes; state: good=1 eof=0 fail=0 bad=0
 Loading SA ... done! state: good=1 eof=0 fail=0 bad=0; loaded 1162065 bytes
 Loading SAindex ... done: 95643 bytes
-Finished loading the genome: Thu Jul  3 12:22:47 2025
+Finished loading the genome: Fri Jul  4 09:53:24 2025
 
 alignIntronMax=alignMatesGapMax=0, the max intron size will be approximately determined by (2^winBinNbits)*winAnchorDistNbins=589824
 Loaded transcript database, nTr=530
 Loaded exon database, nEx=530
 Thread #0 end of input stream, nextChar=-1
-BAM sorting: 10054 mapped reads
+BAM sorting: 9927 mapped reads
 BAM sorting bins genomic start loci:
 1	65	0
-2	73	0
-3	106	0
+2	82	0
+3	106	1
 4	112	0
 5	123	0
-6	123	0
+6	124	0
 7	124	0
 8	124	0
 9	125	0
 10	126	0
 11	127	0
 12	127	0
-13	127	4
-14	128	0
+13	128	0
+14	129	0
 15	130	0
 16	131	0
-17	166	18
-18	192	0
-19	197	2
+17	169	0
+18	193	60
+19	198	0
 20	202	0
 21	202	0
 22	210	0
 23	218	0
 24	229	0
-25	231	0
+25	231	1
 26	263	0
 27	293	0
 28	301	0
-29	312	226
+29	316	0
 30	329	0
 31	330	0
 32	334	0
 33	343	0
-34	381	0
+34	380	0
 35	397	0
 36	397	0
-37	405	0
+37	401	3
 38	433	0
 39	437	0
 40	437	0
-41	466	0
-42	483	0
-43	529	108
-44	529	1031
-45	529	1939
-46	529	2889
-47	529	3690
-48	529	4473
+41	463	0
+42	482	0
+43	529	88
+44	529	1009
+45	529	1901
+46	529	2786
+47	529	3645
+48	529	4436
 Completed: thread #0
-Jul 03 12:22:47 ..... finished mapping
+Jul 04 09:53:24 ..... finished mapping
 RAM after mapping:
-VmPeak:	  424468 kB; VmSize:	  376616 kB; VmHWM:	  334764 kB; VmRSS:	  329996 kB; 
+VmPeak:	  424468 kB; VmSize:	  376616 kB; VmHWM:	  334972 kB; VmRSS:	  330252 kB; 
 RAM after freeing genome index memory:
-VmPeak:	  424468 kB; VmSize:	  239796 kB; VmHWM:	  334764 kB; VmRSS:	  193180 kB; 
-Jul 03 12:22:47 ..... started Solo counting
-Jul 03 12:22:47 ... Starting Solo post-map for Gene
-Jul 03 12:22:47 ... Allocated and initialized readInfo array, nReadsInput = 10001
-Jul 03 12:22:47 ... Finished allocating arrays for Solo 7.59177e-05 GiB
-Jul 03 12:22:47 ... Finished reading reads from Solo files nCB=6134, nReadPerCBmax=8, yesWLmatch=0
+VmPeak:	  424468 kB; VmSize:	  239796 kB; VmHWM:	  334972 kB; VmRSS:	  193508 kB; 
+Jul 04 09:53:24 ..... started Solo counting
+Jul 04 09:53:24 ... Starting Solo post-map for Gene
+Jul 04 09:53:24 ... Allocated and initialized readInfo array, nReadsInput = 10001
+Jul 04 09:53:24 ... Finished allocating arrays for Solo 7.58059e-05 GiB
+Jul 04 09:53:24 ... Finished reading reads from Solo files nCB=6127, nReadPerCBmax=8, yesWLmatch=0
 RAM for solo feature Gene
-VmPeak:	  424468 kB; VmSize:	  261804 kB; VmHWM:	  334764 kB; VmRSS:	  214988 kB; 
-Jul 03 12:22:47 ... Finished collapsing UMIs
-Jul 03 12:22:47 ... Solo: writing raw matrix
+VmPeak:	  424468 kB; VmSize:	  261808 kB; VmHWM:	  334972 kB; VmRSS:	  215240 kB; 
+Jul 04 09:53:24 ... Finished collapsing UMIs
+Jul 04 09:53:24 ... Solo: writing raw matrix
 Solo output directory directory exists and will be overwritten: starsolo_out/Solo.out/Gene//raw/
-Jul 03 12:22:47 ... Solo: cell filtering
-cellFiltering: simple: nUMImax=3; nUMImin=1; nCellsSimple=6134
+Jul 04 09:53:24 ... Solo: cell filtering
+cellFiltering: simple: nUMImax=3; nUMImin=1; nCellsSimple=6127
 Solo output directory directory exists and will be overwritten: starsolo_out/Solo.out/Gene/filtered/
 RAM after completing solo:
-VmPeak:	  424468 kB; VmSize:	  254672 kB; VmHWM:	  334764 kB; VmRSS:	  207928 kB; 
-Jul 03 12:22:47 ..... finished Solo counting
-Jul 03 12:22:47 ..... started sorting BAM
-Max memory needed for sorting = 281235
+VmPeak:	  424468 kB; VmSize:	  254676 kB; VmHWM:	  334972 kB; VmRSS:	  208184 kB; 
+Jul 04 09:53:24 ..... finished Solo counting
+Jul 04 09:53:24 ..... started sorting BAM
+Max memory needed for sorting = 277514
 ALL DONE!

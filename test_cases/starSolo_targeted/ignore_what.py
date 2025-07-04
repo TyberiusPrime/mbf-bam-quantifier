@@ -28,7 +28,10 @@ for read in a.fetch(until_eof=True):
                 longest_secondary = ll
             elif not read.is_secondary and ll > longest_primary:
                 longest_primary = ll
+            if read.is_reverse:
+                continue
             print(read.query_name, read.cigarstring, 'secondary=', read.is_secondary)
+            print('reverse', read.is_reverse)
             print(ll)
             print(gn)
             print(xq)

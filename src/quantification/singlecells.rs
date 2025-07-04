@@ -19,7 +19,7 @@ impl Quant for SingleCell {
         if config.cell_barcodes.is_none() {
             bail!("SingleCell quantification requires cell barcodes to be defined in the configuration.");
         }
-        if matches!(config.umi, crate::extractors::UMIExtraction::NoUMI(_)) {
+        if config.umi.is_none() {
             bail!("SingleCell quantification requires UMI extraction to be defined in the configuration.");
         }
         Ok(())

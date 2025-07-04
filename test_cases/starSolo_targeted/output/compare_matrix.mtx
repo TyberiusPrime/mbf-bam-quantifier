@@ -73,17 +73,17 @@ if a != b:
     added_sum = 0
     lost_count = 0
     differ_count = 0
-    for k in union:
+    for k in sorted(union):
         ...
         if k in a and k in b:
             if a[k] != b[k]:
                 print(f"{k}: {a.get(k, 0)} != {b.get(k, 0)}")
                 differ_count += 1
         elif k in a:
-            print("lost", k)
+            print("lost", k, a[k])
             lost_count += 1
         elif k in b:
-            print("added", k)
+            print("added", k, b[k])
             added_sum += b[k]
             added_count += 1
         else:

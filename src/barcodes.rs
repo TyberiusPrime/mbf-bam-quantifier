@@ -39,21 +39,11 @@ where
 
     deserializer.deserialize_any(Visitor)
 }
-fn validate_mode(mode: &extractors::UMIExtraction) -> Result<(), serde_valid::validation::Error> {
-    if matches!(mode, extractors::UMIExtraction::NoUMI(_)) {
-        Err(serde_valid::validation::Error::Custom(
-            "Must define an extraction mode for barcodes".to_string(),
-        ))
-    } else {
-        Ok(())
-    }
-}
 
 type Whitelist = HashSet<Vec<u8>>;
 
 #[derive(serde::Deserialize, Debug, Clone, Validate)]
 #[serde(deny_unknown_fields)]
-#[validate(custom = |s|validate_mode(&s.extract))]
 pub struct CellBarcodes {
     extract: extractors::UMIExtraction,
     #[serde(deserialize_with = "u8_from_char_or_number")]
@@ -84,7 +74,7 @@ impl CellBarcodes {
         Ok(())
     }
 
-    pub fn extract(&self, read: &rust_htslib::bam::record::Record) -> Option<Vec<u8>> {
+    pub fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
         self.extract.extract(read)
     }
 

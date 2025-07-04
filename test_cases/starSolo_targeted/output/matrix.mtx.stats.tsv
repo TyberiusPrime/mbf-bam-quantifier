@@ -1,10 +1,10 @@
 stat	count
 ambiguous	0
-barcode_not_in_whitelist	0
-correct	309683
+barcode_not_in_whitelist	3122
+correct	6783
 duplicate	0
-filtered	0
+filtered	7
 no_barcode	0
 no_umi	0
 outside	0
-reverse	0
+reverse	15

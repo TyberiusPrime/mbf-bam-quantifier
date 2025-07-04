@@ -23,14 +23,23 @@
 	mode = 'Tag'
 	tag = 'UB'
 
+# star solo only assigns genes to reads if the match the
+# known splicing.
+# we don't (yet),
+[[filter]]
+  mode = 'Spliced'
+  action ='remove'
 
+
+# told star not to produce multimappers
 # [[filter]]
 #     mode = "multimapper"
 #     action = "remove"
 
 [strategy]
 	multi_region = 'count_both'
-	direction = 'ignore'
+	overlap ='intersection_strict'
+	direction = 'Forward'
 
 [quant]
    mode = "sc"
@@ -38,4 +47,4 @@
 
 [output]
     directory = 'output'
-    write_annotated_bam = true
+    write_annotated_bam = false

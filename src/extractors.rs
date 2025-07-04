@@ -1,3 +1,4 @@
+use anyhow::{bail, Context, Result};
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Deserializer};
 use serde_valid::Validate;
@@ -16,7 +17,7 @@ where
 
 #[enum_dispatch(UMIExtraction)]
 pub trait UMIExtractor {
-    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Option<Vec<u8>>;
+    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>>;
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -24,7 +25,6 @@ pub trait UMIExtractor {
 #[serde(tag = "mode")]
 #[enum_dispatch]
 pub enum UMIExtraction {
-    NoUMI(NoUMI),
     #[serde(alias = "regex_name")]
     RegexName(RegexName),
 
@@ -32,22 +32,6 @@ pub enum UMIExtraction {
     ReadRegion(ReadRegion),
     #[serde(alias = "Tag")]
     Tag(Tag),
-}
-
-impl Default for UMIExtraction {
-    fn default() -> Self {
-        UMIExtraction::NoUMI(NoUMI {})
-    }
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct NoUMI {}
-
-impl UMIExtractor for NoUMI {
-    fn extract(&self, _read: &rust_htslib::bam::record::Record) -> Option<Vec<u8>> {
-        None // No UMI extraction, return None
-    }
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -58,11 +42,17 @@ pub struct RegexName {
 }
 
 impl UMIExtractor for RegexName {
-    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Option<Vec<u8>> {
+    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
         let name = read.qname();
         self.regex
             .captures(name)
-            .and_then(|caps| caps.get(1).map(|m| name[m.start()..m.end()].to_vec()))
+            .and_then(|caps| Some(caps.get(1).map(|m| name[m.start()..m.end()].to_vec())))
+            .with_context(|| {
+                format!(
+                    "Failed to extract from read name via regex: {}",
+                    std::str::from_utf8(read.qname()).unwrap_or("<invalid UTF-8>")
+                )
+            })
     }
 }
 
@@ -85,9 +75,16 @@ pub struct ReadRegion {
 }
 
 impl UMIExtractor for ReadRegion {
-    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Option<Vec<u8>> {
+    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
+        if self.stop > read.seq_len() as u16 {
+            bail!(
+                "Read region stop ({}) exceeds read length ({})",
+                self.stop,
+                read.seq_len()
+            );
+        }
         let seq = read.seq().as_bytes()[self.start as usize..self.stop as usize].to_vec();
-        Some(seq)
+        Ok(Some(seq))
     }
 }
 #[derive(serde::Deserialize, Debug, Clone, Validate)]
@@ -98,11 +95,11 @@ pub struct Tag {
 }
 
 impl UMIExtractor for Tag {
-    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Option<Vec<u8>> {
-        let tag = read.aux(&self.tag).ok()?;
+    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
+        let tag = read.aux(&self.tag)?;
         match tag {
-            rust_htslib::bam::record::Aux::String(v) => Some(v.as_bytes().to_vec()),
-            _ => None,
+            rust_htslib::bam::record::Aux::String(v) => Ok(Some(v.as_bytes().to_vec())),
+            _ => bail!("Expected tag to be a string, found {:?}", tag),
         }
     }
 }

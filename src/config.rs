@@ -23,8 +23,7 @@ pub struct Config {
     #[serde(default)]
     pub strategy: Strategy,
     #[serde(alias = "UMI")]
-    #[serde(default)]
-    pub umi: UMIExtraction,
+    pub umi: Option<UMIExtraction>,
 
     pub cell_barcodes: Option<CellBarcodes>,
     pub output: Output,

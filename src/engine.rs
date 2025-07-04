@@ -128,7 +128,9 @@ pub enum AnnotatedRead {
     NotInRegion,
     Counted(AnnotatedReadInfo),
     Duplicate,
-    BarcodeNotInWhitelist,
+    NoBarcode,
+    NoUMI,
+    BarcodeNotInWhitelist(Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -182,7 +184,8 @@ pub enum Output {
         id_attribute: String,
     },
     SingleCell {
-        output_pretfix: PathBuf,
+        output_prefix: PathBuf,
+        stat_counter: HashMap<String, usize>,
         features: HashMap<String, usize>,
         barcodes: HashSet<Vec<u8>>,
         matrix_temp_dir: PathBuf,
@@ -203,6 +206,8 @@ impl Output {
             ("reverse", 0),
             ("outside", 0),
             ("duplicate", 0),
+            ("no_barcode", 0),
+            ("no_umi", 0),
             ("barcode_not_in_whitelist", 0),
             ("filtered", 0),
         ]
@@ -239,8 +244,24 @@ impl Output {
                 features.insert(key.clone(), features.len());
             }
         }
+        let stat_counter = [
+            ("ambiguous", 0),
+            ("correct", 0),
+            ("reverse", 0),
+            ("outside", 0),
+            ("duplicate", 0),
+            ("no_barcode", 0),
+            ("no_umi", 0),
+            ("barcode_not_in_whitelist", 0),
+            ("filtered", 0),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+
         Ok(Output::SingleCell {
-            output_pretfix: output_prefix,
+            output_prefix: output_prefix,
+            stat_counter,
             features,
             barcodes: HashSet::new(),
             matrix_temp_dir,
@@ -260,19 +281,8 @@ impl Output {
                 ..
             } => {
                 for (read, _org_index) in annotated_reads {
-                    match read {
+                    let count_as = match read {
                         AnnotatedRead::Counted(info) => {
-                            match (
-                                info.genes_hit_correct.is_empty(),
-                                info.genes_hit_reverse.is_empty(),
-                            ) {
-                                (true, true) => {
-                                    *stat_counter.get_mut("outside").unwrap() += 1;
-                                }
-                                (false, true) => *stat_counter.get_mut("correct").unwrap() += 1,
-                                (true, false) => *stat_counter.get_mut("reverse").unwrap() += 1,
-                                (false, false) => *stat_counter.get_mut("ambiguous").unwrap() += 1,
-                            }
                             for (gene, weight) in &info.genes_hit_correct {
                                 let entry = counter.entry(gene.to_string()).or_insert((0.0, 0.0));
                                 entry.0 += *weight as f64; // count forward
@@ -281,18 +291,29 @@ impl Output {
                                 let entry = counter.entry(gene.to_string()).or_insert((0.0, 0.0));
                                 entry.1 += *weight as f64; // count reverse
                             }
+                            match (
+                                info.genes_hit_correct.is_empty(),
+                                info.genes_hit_reverse.is_empty(),
+                            ) {
+                                (true, true) => "outside",
+                                (false, true) => "correct",
+                                (true, false) => "reverse",
+                                (false, false) => "ambiguous",
+                            }
                         }
-                        AnnotatedRead::Filtered => *stat_counter.get_mut("filtered").unwrap() += 1,
+                        AnnotatedRead::Filtered => "filtered",
                         AnnotatedRead::NotInRegion => {
                             //these are 'accidential overfetches'
-                            //*stat_counter.get_mut("outside").unwrap() += 1
+                            "overfetch"
                         }
-                        AnnotatedRead::Duplicate => {
-                            *stat_counter.get_mut("duplicate").unwrap() += 1
-                        }
-                        AnnotatedRead::BarcodeNotInWhitelist => {
-                            *stat_counter.get_mut("barcode_not_in_whitelist").unwrap() += 1
-                        }
+                        AnnotatedRead::Duplicate => "duplicate",
+                        AnnotatedRead::NoBarcode => "no_barcode",
+
+                        AnnotatedRead::NoUMI => "no_umi",
+                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_whitelist",
+                    };
+                    if count_as != "overfetch" {
+                        *stat_counter.get_mut(count_as).unwrap() += 1;
                     }
                 }
             }
@@ -301,32 +322,56 @@ impl Output {
                 features,
                 barcodes,
                 entry_count,
+                stat_counter,
                 ..
             } => {
                 //we want a consistent output order
                 let mut out: BTreeMap<(usize, _), f64> = BTreeMap::new();
                 for (read, _org_index) in annotated_reads {
-                    match read {
+                    let count_as = match read {
                         AnnotatedRead::Counted(info) => {
-                            if let Some(barcode) = info.barcode.as_ref() {
-                                for (gene, weight) in &info.genes_hit_correct {
-                                    let features_len = features.len();
-                                    let feature_idx = match features.entry(gene.clone()) {
-                                        std::collections::hash_map::Entry::Occupied(e) => *e.get(),
-                                        std::collections::hash_map::Entry::Vacant(e) => {
-                                            let new_index = features_len;
-                                            e.insert(new_index);
-                                            new_index
-                                        }
-                                    };
-                                    barcodes.insert(barcode.clone());
-                                    out.entry((feature_idx, barcode))
-                                        .and_modify(|e| *e += *weight as f64)
-                                        .or_insert(*weight as f64);
-                                }
+                            let barcode = info.barcode.as_ref().expect("no barcode? bug");
+                            for (gene, weight) in &info.genes_hit_correct {
+                                let features_len = features.len();
+                                let feature_idx = match features.entry(gene.clone()) {
+                                    std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+                                    std::collections::hash_map::Entry::Vacant(e) => {
+                                        let new_index = features_len;
+                                        e.insert(new_index);
+                                        new_index
+                                    }
+                                };
+                                barcodes.insert(barcode.clone());
+                                out.entry((feature_idx, barcode))
+                                    .and_modify(|e| *e += *weight as f64)
+                                    .or_insert(*weight as f64);
+                            }
+                            match (
+                                info.genes_hit_correct.is_empty(),
+                                info.genes_hit_reverse.is_empty(),
+                            ) {
+                                (true, true) => "outside",
+                                (false, true) => "correct",
+                                (true, false) => "reverse",
+                                (false, false) => "ambiguous",
                             }
                         }
-                        _ => {}
+                        AnnotatedRead::Filtered => "filtered",
+                        AnnotatedRead::NotInRegion =>
+                        //these are 'accidential overfetches'
+                        {
+                            "overfetch"
+                        }
+
+                        AnnotatedRead::Duplicate => "duplicate",
+
+                        AnnotatedRead::NoBarcode => "no_barcode",
+
+                        AnnotatedRead::NoUMI => "no_umi",
+                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_whitelist",
+                    };
+                    if count_as != "overfetch" {
+                        *stat_counter.get_mut(count_as).unwrap() += 1;
                     }
                 }
                 let mut matrix_handle = BufWriter::new(
@@ -405,13 +450,14 @@ impl Output {
                     .context("Failed to write stats file")?;
             }
             Output::SingleCell {
-                output_pretfix,
+                output_prefix,
                 features,
                 barcodes,
                 matrix_temp_dir,
                 entry_count,
+                stat_counter,
             } => {
-                let features_filename = output_pretfix.join("features.tsv");
+                let features_filename = output_prefix.join("features.tsv");
                 let feature_len = features.len();
                 let sorted_features = {
                     let mut temp = features
@@ -421,7 +467,6 @@ impl Output {
                     temp.sort();
                     temp
                 };
-                dbg!("feature count", sorted_features.len());
                 let mut feature_file =
                     BufWriter::new(ex::fs::File::create(&features_filename)?.into_inner());
                 for (_, feature) in sorted_features {
@@ -430,7 +475,7 @@ impl Output {
                         .context("Failed to write features to file")?;
                 }
 
-                let barcodes_filename = output_pretfix.join("barcodes.tsv");
+                let barcodes_filename = output_prefix.join("barcodes.tsv");
                 let barcode_len = barcodes.len();
                 let (barcodes, barcode_to_index) = {
                     let mut temp: Vec<_> = barcodes.into_iter().collect();
@@ -452,7 +497,7 @@ impl Output {
                 }
                 //matrix file has a header with nrow, ncols, nentries, so we need to push it into a
                 //new file.
-                let matrix_filename = output_pretfix.join("matrix.mtx");
+                let matrix_filename = output_prefix.join("matrix.mtx");
 
                 let mut matrix_out = ex::fs::File::create(&matrix_filename)?;
                 matrix_out.write_all(
@@ -465,14 +510,17 @@ impl Output {
                     .context("Failed to write header to matrix file")?;
 
                 let sorted_chunk_names: Vec<_> = chunk_names.iter().sorted().collect();
-                dbg!(&sorted_chunk_names);
 
                 for chunk_str_id in sorted_chunk_names {
                     let temp_filename = matrix_temp_dir.join(chunk_str_id);
-                    let temp_handle = BufReader::new(ex::fs::File::open(&temp_filename)
-                        .context("Failed to open temporary matrix file")?.into_inner());
+                    let temp_handle = BufReader::new(
+                        ex::fs::File::open(&temp_filename)
+                            .context("Failed to open temporary matrix file")?
+                            .into_inner(),
+                    );
                     for line in temp_handle.lines() {
-                        let line = line.context("Failed to read line from temporary matrix file")?;
+                        let line =
+                            line.context("Failed to read line from temporary matrix file")?;
                         let mut parts = line.split_whitespace();
                         let feature_idx: usize = parts
                             .next()
@@ -506,13 +554,16 @@ impl Output {
 
                 if matrix_temp_dir.exists() {
                     ex::fs::remove_dir_all(&matrix_temp_dir)
-                    .context("Failed to remove temporary matrix directory")?;
+                        .context("Failed to remove temporary matrix directory")?;
                 } else {
                     bail!(
                         "Temporary matrix dir did not exist, what did we just copy?: {}",
                         matrix_temp_dir.display()
                     );
                 }
+
+                Self::write_stats(&matrix_filename, &stat_counter)
+                    .context("Failed to write stats file")?;
             }
         }
         Ok(())
@@ -542,7 +593,7 @@ pub struct Engine {
     quantifier: Quantification,
     filters: Vec<crate::filters::Filter>,
     matcher: ReadToGeneMatcher,
-    umi_extractor: crate::extractors::UMIExtraction,
+    umi_extractor: Option<crate::extractors::UMIExtraction>,
     cell_barcode: Option<crate::barcodes::CellBarcodes>,
     output: Arc<Mutex<Output>>,
 }
@@ -555,7 +606,7 @@ impl Engine {
         aggregation_id_attribute: &str,
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
-        umi_extractor: crate::extractors::UMIExtraction,
+        umi_extractor: Option<crate::extractors::UMIExtraction>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
         output: Output,
@@ -601,7 +652,7 @@ impl Engine {
         references: Vec<(String, u64)>,
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
-        umi_extractor: crate::extractors::UMIExtraction,
+        umi_extractor: Option<crate::extractors::UMIExtraction>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
         output: Output,
@@ -637,7 +688,7 @@ impl Engine {
         tag: [u8; 2],
         filters: Vec<crate::filters::Filter>,
         quantifier: Quantification,
-        umi_extractor: crate::extractors::UMIExtraction,
+        umi_extractor: Option<crate::extractors::UMIExtraction>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         output: Output,
     ) -> Self {
@@ -719,7 +770,7 @@ impl Engine {
                             max_skip_len,
                             correct_reads_for_clipping,
                         )
-                        .expect("Failure in quantification");
+                        .context("Failure in quantification")?;
 
                     //annotated_reads.retain(|read| matches!(read, AnnotatedRead::Counted(_)));
                     ////this is lifetime trouble
@@ -767,7 +818,7 @@ impl Engine {
                     for (start, stop) in change_indices.iter().tuple_windows() {
                         self.quantifier
                             .weight_read_group(&mut annotated_reads[*start..*stop])
-                            .expect("weighting failed");
+                            .context("weighting failed")?;
                     }
 
                     let lock = self.output.lock();
@@ -789,7 +840,7 @@ impl Engine {
                             header,
                             max_skip_len,
                         )
-                        .expect("Failed to write output bam");
+                        .context("Failed to write output bam")?;
                     }
                     Ok(())
                 })
@@ -878,11 +929,27 @@ impl Engine {
                 let barcode = {
                     match { self.cell_barcode.as_ref() } {
                         Some(cb) => {
-                            match cb.correct(&cb.extract(&read).expect("barcode extraction failed"))
-                            {
-                                Some(corrected_barcode) => Some(corrected_barcode),
+                            let bc = cb.extract(&read).context("barcode extraction failed")?; // an error
+                            match bc {
+                                Some(uncorrected) => {
+                                    // if we have a barcode, correct it
+                                    let corrected_barcode = cb.correct(&uncorrected);
+                                    match corrected_barcode {
+                                        Some(bc) => Some(bc),
+                                        None => {
+                                            res.push((
+                                                AnnotatedRead::BarcodeNotInWhitelist(
+                                                    uncorrected.clone(),
+                                                ),
+                                                ii,
+                                            ));
+                                            ii += 1;
+                                            continue;
+                                        }
+                                    }
+                                }
                                 None => {
-                                    res.push((AnnotatedRead::BarcodeNotInWhitelist, ii));
+                                    res.push((AnnotatedRead::NoBarcode, ii));
                                     ii += 1;
                                     continue;
                                 }
@@ -891,12 +958,25 @@ impl Engine {
                         None => None,
                     }
                 };
+                let umi: Option<Vec<u8>> = {
+                    match self.umi_extractor.as_ref() {
+                        Some(x) => match x.extract(&read)? {
+                            Some(umi) => Some(umi),
+                            None => {
+                                res.push((AnnotatedRead::NoUMI, ii));
+                                ii += 1;
+                                continue;
+                            }
+                        },
+                        None => None,
+                    }
+                };
 
                 let info = AnnotatedReadInfo {
                     corrected_position: corrected_position as u32,
                     genes_hit_correct: genes_hit_correct.into_iter().map(|id| (id, 1.0)).collect(),
                     genes_hit_reverse: genes_hit_reverse.into_iter().map(|id| (id, 1.0)).collect(),
-                    umi: self.umi_extractor.extract(&read),
+                    umi: umi,
                     barcode: barcode,
                     mapping_priority: (
                         read.no_of_alignments().try_into().unwrap_or(255),
@@ -907,7 +987,7 @@ impl Engine {
                 ii += 1;
             } else {
                 panic!("Did not expect to see an unaligned read in a chunk: {:?}, pos: {}, cigar: {} - corrected to {:?}", 
-                    std::str::from_utf8(read.qname()).unwrap(), read.pos(), read.cigar(), read.corrected_pos(max_skip_len));
+                    std::str::from_utf8(read.qname()).unwrap_or("not-uf8"), read.pos(), read.cigar(), read.corrected_pos(max_skip_len));
             }
         }
         Ok(res)
@@ -954,8 +1034,21 @@ impl Engine {
                     AnnotatedRead::Duplicate => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(3))?;
                     }
-                    AnnotatedRead::BarcodeNotInWhitelist => {
+                    AnnotatedRead::BarcodeNotInWhitelist(uncorrected_barcode) => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(4))?;
+                        read.replace_aux(
+                            b"CR",
+                            rust_htslib::bam::record::Aux::String(
+                                std::str::from_utf8(uncorrected_barcode).unwrap_or("non-utf8"),
+                            ),
+                        )?;
+                    }
+                    AnnotatedRead::NoBarcode => {
+                        read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(5))?;
+                    }
+
+                    AnnotatedRead::NoUMI => {
+                        read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(6))?;
                     }
                     AnnotatedRead::Counted(info) => {
                         //we have a read that was annotated
@@ -1175,21 +1268,16 @@ impl TreeMatcher {
                 }
                 crate::config::OverlapMode::IntersectionStrict => {
                     //only keep those that are fully contained in the region
-                    if std::str::from_utf8(read.qname()).unwrap()
-                        == "HWI-C00113:73:HVM2VBCXX:1:1209:15870:92336"
-                    {
-                        dbg!(std::str::from_utf8(read.qname()).unwrap(), &gg);
-                    }
                     gg.retain(|_, v| v.len() == bases_aligned as usize);
                 }
                 crate::config::OverlapMode::IntersectionNonEmpty => {
                     let any_fully_contained =
                         gg.values().any(|v| v.len() == bases_aligned as usize);
                     if any_fully_contained {
-                        //only keep those that are fully contained in the region
+                        // only keep those that are fully contained in the region
                         gg.retain(|_, v| v.len() == bases_aligned as usize);
                     } else {
-                        // keep all.
+                        // multiple partial overlaps, keep all.
                     }
                 }
             }

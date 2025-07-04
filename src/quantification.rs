@@ -53,7 +53,7 @@ impl Quantification {
         input: &Input,
         filters: Vec<crate::filters::Filter>,
         output: &Output,
-        umi_extraction: UMIExtraction,
+        umi_extraction: Option<UMIExtraction>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         strategy: crate::config::Strategy,
     ) -> anyhow::Result<()> {

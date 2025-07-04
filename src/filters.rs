@@ -1,7 +1,7 @@
-use enum_dispatch::enum_dispatch;
 use crate::bam_ext::BamRecordExtensions;
+use enum_dispatch::enum_dispatch;
 
-#[derive(serde::Deserialize, Debug, Clone, serde::Serialize, PartialEq,Eq)]
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize, PartialEq, Eq)]
 enum KeepOrRemove {
     #[serde(alias = "keep")]
     Keep,
@@ -28,6 +28,8 @@ pub enum Filter {
     #[serde(alias = "read2")]
     Read2(Read2),
 
+    #[serde(alias = "spliced")]
+    Spliced(Spliced),
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -84,5 +86,24 @@ impl ReadFilter for Read2 {
             return self.action == KeepOrRemove::Remove;
         }
         false
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct Spliced {
+    action: KeepOrRemove,
+}
+
+impl ReadFilter for Spliced {
+    fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
+        let hit = read
+            .cigar()
+            .iter()
+            .skip(1)
+            .any(|c| matches!(c, rust_htslib::bam::record::Cigar::RefSkip(_)));
+        match self.action {
+            KeepOrRemove::Keep => !hit,
+            KeepOrRemove::Remove => hit,
+        }
     }
 }
