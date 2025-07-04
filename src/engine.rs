@@ -135,10 +135,15 @@ pub enum AnnotatedRead {
 }
 
 #[derive(Debug)]
+pub struct Hits {
+    correct: HashSet<String>, 
+    reverse: HashSet<String>, 
+}
+
+#[derive(Debug)]
 pub struct AnnotatedReadInfo {
     pub corrected_position: u32, // clipping corrected position 4 bytes
-    pub genes_hit_correct: HashMap<String, f32>, //todo: optimize! 48bytes.
-    pub genes_hit_reverse: HashMap<String, f32>, //todo: optimize! 48bytes.
+    pub hits: Hits, 
     pub umi: Option<Vec<u8>>,    // Optional: What's it's UMI. 24 bytes
     pub barcode: Option<Vec<u8>>, // Optional: What's it's cell-barcode 24 bytes
     pub mapping_priority: (u8, u8),
@@ -285,17 +290,18 @@ impl Output {
                 for (read, _org_index) in annotated_reads {
                     let count_as = match read {
                         AnnotatedRead::Counted(info) => {
-                            for (gene, weight) in &info.genes_hit_correct {
+                            let hits = &info.hits;
+                            for gene in &hits.correct {
                                 let entry = counter.entry(gene.to_string()).or_insert((0.0, 0.0));
-                                entry.0 += *weight as f64; // count forward
+                                entry.0 += 1.0; // count forward
                             }
-                            for (gene, weight) in &info.genes_hit_reverse {
+                            for gene in &hits.reverse {
                                 let entry = counter.entry(gene.to_string()).or_insert((0.0, 0.0));
-                                entry.1 += *weight as f64; // count reverse
+                                entry.1 += 1.0; // count reverse
                             }
                             match (
-                                info.genes_hit_correct.is_empty(),
-                                info.genes_hit_reverse.is_empty(),
+                                hits.correct.is_empty(),
+                                hits.reverse.is_empty(),
                             ) {
                                 (true, true) => "outside",
                                 (false, true) => "correct",
@@ -333,7 +339,8 @@ impl Output {
                     let count_as = match read {
                         AnnotatedRead::Counted(info) => {
                             let barcode = info.barcode.as_ref().expect("no barcode? bug");
-                            for (gene, weight) in &info.genes_hit_correct {
+                            let hits = &info.hits;
+                            for gene in &hits.correct {
                                 let features_len = features.len();
                                 let feature_idx = match features.entry(gene.clone()) {
                                     std::collections::hash_map::Entry::Occupied(e) => *e.get(),
@@ -345,12 +352,12 @@ impl Output {
                                 };
                                 barcodes.insert(barcode.clone());
                                 out.entry((feature_idx, barcode))
-                                    .and_modify(|e| *e += *weight as f64)
-                                    .or_insert(*weight as f64);
+                                    .and_modify(|e| *e += 1.0)
+                                    .or_insert(1.0);
                             }
                             match (
-                                info.genes_hit_correct.is_empty(),
-                                info.genes_hit_reverse.is_empty(),
+                                hits.correct.is_empty(),
+                                hits.reverse.is_empty(),
                             ) {
                                 (true, true) => "outside",
                                 (false, true) => "correct",
@@ -1000,8 +1007,10 @@ impl Engine {
                 let info = AnnotatedReadInfo {
                     corrected_position: corrected_position as u32,
                     reverse: read.is_reverse(),
-                    genes_hit_correct: genes_hit_correct.into_iter().map(|id| (id, 1.0)).collect(),
-                    genes_hit_reverse: genes_hit_reverse.into_iter().map(|id| (id, 1.0)).collect(),
+                    hits: Hits {
+                        correct: genes_hit_correct.clone(),
+                        reverse: genes_hit_reverse.clone(),
+                    },
                     umi: umi,
                     barcode: barcode,
                     mapping_priority: (
@@ -1082,25 +1091,23 @@ impl Engine {
                         let mut tag = String::new();
                         let mut first = true;
 
-                        for gene in info.genes_hit_correct.keys().sorted() {
-                            let weight = *info.genes_hit_correct.get(gene).unwrap();
+                        for gene in info.hits.correct.iter().sorted() {
                             if !first {
                                 tag.push(',')
                             }
                             first = false;
-                            tag.push_str(&format!("{}={:.2}", gene, weight));
+                            tag.push_str(gene);
                         }
                         read.replace_aux(b"XQ", rust_htslib::bam::record::Aux::String(&tag))?;
 
                         let mut tag = String::new();
                         let mut first = true;
-                        for gene in info.genes_hit_reverse.keys().sorted() {
-                            let weight = *info.genes_hit_reverse.get(gene).unwrap();
+                        for gene in info.hits.reverse.iter().sorted() {
                             if !first {
                                 tag.push(',')
                             }
                             first = false;
-                            tag.push_str(&format!("{}={:.2}", gene, weight));
+                            tag.push_str(gene);
                         }
                         read.replace_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
                         read.replace_aux(
