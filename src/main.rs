@@ -1,3 +1,8 @@
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 use human_panic::{Metadata, setup_panic};
 use std::path::PathBuf;
 
@@ -25,6 +30,7 @@ fn main() -> Result<()> {
             .support("Open a github issue at https://github.com/TyberiusPrime/mbf-bam-quantifier/issues/new and attach the crash report.")
     );
     }
+    env_logger::init();
 
     assert!(
         !std::env::args().any(|x| x == "--test-friendly-panic"),

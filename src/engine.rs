@@ -425,6 +425,7 @@ impl Output {
     }
 
     fn finish(self, chunk_names: &[String]) -> Result<()> {
+        measure_time::info_time!("Preparing final output");
         match self {
             Output::PerRegion {
                 output_filename,
@@ -805,91 +806,112 @@ impl Engine {
             let result: Vec<Result<()>> = chunks
                 .into_par_iter()
                 .map(|chunk| -> Result<()> {
-                    let mut bam =
-                        crate::io::open_indexed_bam(bam_filename, index_filename).unwrap();
-                    let mut interner = StringInterner::default();
-                    //println!("{} - Start chunk", chunk.str_id());
-                    let mut annotated_reads = self
-                        .annotate_reads(
-                            &mut bam,
-                            &chunk.chr,
-                            chunk.tid,
-                            chunk.start,
-                            chunk.stop,
-                            max_skip_len,
-                            correct_reads_for_clipping,
-                            &mut interner,
-                        )
-                        .context("Failure in quantification")?;
-                    //println!("{} - {} reads", chunk.str_id(), annotated_reads.len());
+                    {
+                        let mut bam =
+                            crate::io::open_indexed_bam(bam_filename, index_filename).unwrap();
+                        // Within one chunk, the reads we see will fit the same genes,
+                        // over and over,
+                        // so interning the strings is a good memory saving measure.
+                        let mut interner = StringInterner::default();
+                        let mut annotated_reads = self
+                            .annotate_reads(
+                                &mut bam,
+                                &chunk.chr,
+                                chunk.tid,
+                                chunk.start,
+                                chunk.stop,
+                                max_skip_len,
+                                correct_reads_for_clipping,
+                                &mut interner,
+                            )
+                            .context("Failure in quantification")?;
+                        {
+                            measure_time::info_time!(
+                                "{}:{} - sorting reads",
+                                &chunk.chr,
+                                chunk.start
+                            );
 
-                    // we still need to establish the barcode sorting, even if
-                    // correct_reads_for_clipping is false
-                    annotated_reads.sort_by(|a, b| match (&a.0, &b.0) {
-                        (AnnotatedRead::Counted(info_a), AnnotatedRead::Counted(info_b)) => {
-                            { info_a.corrected_position.cmp(&info_b.corrected_position) }
-                                .then_with(|| info_a.reverse.cmp(&info_b.reverse))
-                                .then_with(|| info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref()))
+                            // we still need to establish the barcode sorting, even if
+                            // correct_reads_for_clipping is false
+                            annotated_reads.sort_by(|a, b| match (&a.0, &b.0) {
+                                (
+                                    AnnotatedRead::Counted(info_a),
+                                    AnnotatedRead::Counted(info_b),
+                                ) => { info_a.corrected_position.cmp(&info_b.corrected_position) }
+                                    .then_with(|| info_a.reverse.cmp(&info_b.reverse))
+                                    .then_with(|| {
+                                        info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref())
+                                    }),
+                                (AnnotatedRead::Counted(_), _) => std::cmp::Ordering::Less,
+                                (_, AnnotatedRead::Counted(_)) => std::cmp::Ordering::Greater,
+                                _ => std::cmp::Ordering::Equal,
+                            });
                         }
-                        (AnnotatedRead::Counted(_), _) => std::cmp::Ordering::Less,
-                        (_, AnnotatedRead::Counted(_)) => std::cmp::Ordering::Greater,
-                        _ => std::cmp::Ordering::Equal,
-                    });
+                        {
+                            measure_time::info_time!(
+                                "{}:{} - outputing reads",
+                                &chunk.chr,
+                                chunk.start
+                            );
 
-                    let mut last_pos = None;
-                    //we can't do it without storing change_indices because we'd borrow
-                    //annotated_reads twice...
-                    let mut change_indices = Vec::new();
-                    let mut found_filtered = false;
-                    for (ii, (read, _org_index)) in annotated_reads.iter().enumerate() {
-                        let info = match read {
-                            AnnotatedRead::Counted(info) => info,
-                            _ => {
-                                //we have reached the counted sector.
-                                change_indices.push(ii);
-                                found_filtered = true;
-                                break;
+                            let mut last_pos = None;
+                            //we can't do it without storing change_indices because we'd borrow
+                            //annotated_reads twice...
+                            let mut change_indices = Vec::new();
+                            let mut found_filtered = false;
+                            for (ii, (read, _org_index)) in annotated_reads.iter().enumerate() {
+                                let info = match read {
+                                    AnnotatedRead::Counted(info) => info,
+                                    _ => {
+                                        //we have reached the counted sector.
+                                        change_indices.push(ii);
+                                        found_filtered = true;
+                                        break;
+                                    }
+                                };
+                                let new_pos = Some(info.corrected_position);
+                                if new_pos != last_pos {
+                                    change_indices.push(ii);
+                                    last_pos = Some(info.corrected_position)
+                                }
                             }
-                        };
-                        let new_pos = Some(info.corrected_position);
-                        if new_pos != last_pos {
-                            change_indices.push(ii);
-                            last_pos = Some(info.corrected_position)
+                            if !found_filtered {
+                                change_indices.push(annotated_reads.len());
+                            }
+
+                            for (start, stop) in change_indices.iter().tuple_windows() {
+                                self.dedup_strategy
+                                    .dedup(&mut annotated_reads[*start..*stop])
+                                    .context("weighting failed")?;
+                            }
+
+                            let lock = self.output.lock();
+                            match lock {
+                                Ok(mut output) => {
+                                    output
+                                        .count_reads(&annotated_reads, &chunk, &interner)
+                                        .context("Failed to count reads")?;
+                                }
+                                Err(_) => {
+                                    bail!("Another thread panicked, output no longer available.")
+                                }
+                            }
+                        }
+
+                        if let Some((out_bam_path, header)) = output_bam_info.as_ref() {
+                            Self::write_annotated_reads(
+                                &mut bam,
+                                &chunk,
+                                &annotated_reads,
+                                &out_bam_path,
+                                header,
+                                max_skip_len,
+                                &interner,
+                            )
+                            .context("Failed to write output bam")?;
                         }
                     }
-                    if !found_filtered {
-                        change_indices.push(annotated_reads.len());
-                    }
-
-                    for (start, stop) in change_indices.iter().tuple_windows() {
-                        self.dedup_strategy
-                            .dedup(&mut annotated_reads[*start..*stop])
-                            .context("weighting failed")?;
-                    }
-
-                    let lock = self.output.lock();
-                    match lock {
-                        Ok(mut output) => {
-                            output
-                                .count_reads(&annotated_reads, &chunk, &interner)
-                                .context("Failed to count reads")?;
-                        }
-                        Err(_) => bail!("Another thread panicked, output no longer available."),
-                    }
-
-                    if let Some((out_bam_path, header)) = output_bam_info.as_ref() {
-                        Self::write_annotated_reads(
-                            &mut bam,
-                            &chunk,
-                            &annotated_reads,
-                            &out_bam_path,
-                            header,
-                            max_skip_len,
-                            &interner
-                        )
-                        .context("Failed to write output bam")?;
-                    }
-                    //println!("{} - done", chunk.str_id());
                     Ok(())
                 })
                 .collect();
@@ -947,11 +969,9 @@ impl Engine {
                                           // but there might be a read there that is corrected to
                                           // be within.
         ))?;
+        measure_time::info_time!("{}:{} - reading reads", chr, start);
         'outer: while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
-            /* if ii % 1000000 == 0 {
-                println!("{}:{} - {}+ reads", chr, start, ii)
-            } */
 
             let corrected_position = if correct_reads_for_clipping {
                 read.corrected_pos(max_skip_len)
@@ -1067,7 +1087,7 @@ impl Engine {
         out_bam_path: &Path,
         header: &rust_htslib::bam::Header,
         max_skip_len: u32,
-        interner: &OurInterner
+        interner: &OurInterner,
     ) -> Result<()> {
         let mut out_bam = rust_htslib::bam::Writer::from_path(
             out_bam_path.join(chunk.str_id()),
@@ -1129,7 +1149,9 @@ impl Engine {
                                 tag.push(',')
                             }
                             first = false;
-                            tag.push_str(interner.resolve(*gene).expect("string de-interning failed"));
+                            tag.push_str(
+                                interner.resolve(*gene).expect("string de-interning failed"),
+                            );
                         }
                         read.replace_aux(b"XQ", rust_htslib::bam::record::Aux::String(&tag))?;
 
@@ -1140,7 +1162,9 @@ impl Engine {
                                 tag.push(',')
                             }
                             first = false;
-                            tag.push_str(interner.resolve(*gene).expect("string de-interning failed"));
+                            tag.push_str(
+                                interner.resolve(*gene).expect("string de-interning failed"),
+                            );
                         }
                         read.replace_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
                         read.replace_aux(
