@@ -3,13 +3,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use string_interner::StringInterner;
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
+use crate::deduplication::{Dedup, DeduplicationStrategy};
 use crate::extractors::UMIExtractor;
 use crate::filters::ReadFilter;
 use crate::gtf::Strand;
-use crate::deduplication::{Dedup, DeduplicationStrategy};
 use anyhow::{bail, Context, Result};
 use bio::data_structures::interval_tree::IntervalTree;
 use chunked_genome::{Chunk, ChunkedGenome};
@@ -19,6 +20,8 @@ use rust_htslib::bam::{self, Read as ReadTrait};
 
 use crate::gtf::GTFEntrys;
 pub type OurTree = IntervalTree<u32, (u32, Strand)>;
+
+pub type OurInterner = StringInterner<string_interner::backend::StringBackend>;
 
 pub fn build_trees_from_gtf(
     id_attribute: &str,
@@ -136,15 +139,15 @@ pub enum AnnotatedRead {
 
 #[derive(Debug)]
 pub struct Hits {
-    correct: HashSet<String>, 
-    reverse: HashSet<String>, 
+    correct: HashSet<string_interner::symbol::SymbolU32>,
+    reverse: HashSet<string_interner::symbol::SymbolU32>,
 }
 
 #[derive(Debug)]
 pub struct AnnotatedReadInfo {
     pub corrected_position: u32, // clipping corrected position 4 bytes
-    pub hits: Hits, 
-    pub umi: Option<Vec<u8>>,    // Optional: What's it's UMI. 24 bytes
+    pub hits: Hits,
+    pub umi: Option<Vec<u8>>,     // Optional: What's it's UMI. 24 bytes
     pub barcode: Option<Vec<u8>>, // Optional: What's it's cell-barcode 24 bytes
     pub mapping_priority: (u8, u8),
     pub reverse: bool,
@@ -184,7 +187,7 @@ impl ReadToGeneMatcher {
 pub enum Output {
     PerRegion {
         output_filename: PathBuf,
-        counter: HashMap<String, (f64, f64)>,
+        counter: HashMap<String, (usize, usize)>,
         stat_counter: HashMap<String, usize>,
         sorted_keys: Option<Vec<String>>,
         first_column_only: bool,
@@ -280,6 +283,7 @@ impl Output {
         &mut self,
         annotated_reads: &Vec<(AnnotatedRead, usize)>,
         chunk: &Chunk,
+        interner: &OurInterner,
     ) -> Result<()> {
         match self {
             Output::PerRegion {
@@ -292,17 +296,28 @@ impl Output {
                         AnnotatedRead::Counted(info) => {
                             let hits = &info.hits;
                             for gene in &hits.correct {
-                                let entry = counter.entry(gene.to_string()).or_insert((0.0, 0.0));
-                                entry.0 += 1.0; // count forward
+                                let entry = counter
+                                    .entry(
+                                        interner
+                                            .resolve(*gene)
+                                            .expect("string de-interning failed")
+                                            .to_string(),
+                                    )
+                                    .or_insert((0, 0));
+                                entry.0 = entry.0.saturating_add(1)
                             }
                             for gene in &hits.reverse {
-                                let entry = counter.entry(gene.to_string()).or_insert((0.0, 0.0));
-                                entry.1 += 1.0; // count reverse
+                                let entry = counter
+                                    .entry(
+                                        interner
+                                            .resolve(*gene)
+                                            .expect("string de-interning failed")
+                                            .to_string(),
+                                    )
+                                    .or_insert((0, 0));
+                                entry.1 = entry.1.saturating_add(1)
                             }
-                            match (
-                                hits.correct.is_empty(),
-                                hits.reverse.is_empty(),
-                            ) {
+                            match (hits.correct.is_empty(), hits.reverse.is_empty()) {
                                 (true, true) => "outside",
                                 (false, true) => "correct",
                                 (true, false) => "reverse",
@@ -342,7 +357,12 @@ impl Output {
                             let hits = &info.hits;
                             for gene in &hits.correct {
                                 let features_len = features.len();
-                                let feature_idx = match features.entry(gene.clone()) {
+                                let feature_idx = match features.entry(
+                                    interner
+                                        .resolve(*gene)
+                                        .expect("resolving string failed")
+                                        .to_string(),
+                                ) {
                                     std::collections::hash_map::Entry::Occupied(e) => *e.get(),
                                     std::collections::hash_map::Entry::Vacant(e) => {
                                         let new_index = features_len;
@@ -355,10 +375,7 @@ impl Output {
                                     .and_modify(|e| *e += 1.0)
                                     .or_insert(1.0);
                             }
-                            match (
-                                hits.correct.is_empty(),
-                                hits.reverse.is_empty(),
-                            ) {
+                            match (hits.correct.is_empty(), hits.reverse.is_empty()) {
                                 (true, true) => "outside",
                                 (false, true) => "correct",
                                 (true, false) => "reverse",
@@ -419,7 +436,7 @@ impl Output {
             } => {
                 ex::fs::create_dir_all(&output_filename.parent().unwrap())?;
                 let sorted_keys = sorted_keys.unwrap_or_else(|| {
-                    let mut keys: Vec<_> = counter.keys().cloned().collect();
+                    let mut keys: Vec<_> = counter.keys().map(|x| x.to_string()).collect();
                     keys.sort();
                     keys
                 });
@@ -431,7 +448,7 @@ impl Output {
                         .write_all(format!("{}\tcount\n", id_attribute).as_bytes())
                         .context("Failed to write header to output file")?;
                     for key in sorted_keys {
-                        let count = counter.get(&key).unwrap_or(&(0.0, 0.0)).0;
+                        let count = counter.get(&key).unwrap_or(&(0, 0)).0;
                         out_buffer
                             .write_all(format!("{}\t{}\n", key, count).as_bytes())
                             .context("Failed to write counts to output file")?;
@@ -444,8 +461,7 @@ impl Output {
                         .context("Failed to write header to output file")?;
 
                     for key in sorted_keys {
-                        let (count_correct, count_reverse) =
-                            counter.get(&key).unwrap_or(&(0.0, 0.0));
+                        let (count_correct, count_reverse) = counter.get(&key).unwrap_or(&(0, 0));
                         out_buffer
                             .write_all(
                                 format!("{}\t{}\t{}\n", key, count_correct, count_reverse)
@@ -791,6 +807,8 @@ impl Engine {
                 .map(|chunk| -> Result<()> {
                     let mut bam =
                         crate::io::open_indexed_bam(bam_filename, index_filename).unwrap();
+                    let mut interner = StringInterner::default();
+                    //println!("{} - Start chunk", chunk.str_id());
                     let mut annotated_reads = self
                         .annotate_reads(
                             &mut bam,
@@ -800,8 +818,10 @@ impl Engine {
                             chunk.stop,
                             max_skip_len,
                             correct_reads_for_clipping,
+                            &mut interner,
                         )
                         .context("Failure in quantification")?;
+                    //println!("{} - {} reads", chunk.str_id(), annotated_reads.len());
 
                     // we still need to establish the barcode sorting, even if
                     // correct_reads_for_clipping is false
@@ -851,7 +871,7 @@ impl Engine {
                     match lock {
                         Ok(mut output) => {
                             output
-                                .count_reads(&annotated_reads, &chunk)
+                                .count_reads(&annotated_reads, &chunk, &interner)
                                 .context("Failed to count reads")?;
                         }
                         Err(_) => bail!("Another thread panicked, output no longer available."),
@@ -865,9 +885,11 @@ impl Engine {
                             &out_bam_path,
                             header,
                             max_skip_len,
+                            &interner
                         )
                         .context("Failed to write output bam")?;
                     }
+                    //println!("{} - done", chunk.str_id());
                     Ok(())
                 })
                 .collect();
@@ -887,10 +909,10 @@ impl Engine {
 
         if let Some((temp_dir, output_header)) = output_bam_info {
             combine_temporary_bams(&chunk_names, temp_dir, output_prefix, output_header)?;
-            println!(
+            /* println!(
                 "Output written to: {}",
                 output_prefix.join("annotated.bam").display()
-            );
+            ); */
         }
 
         Ok(())
@@ -905,6 +927,7 @@ impl Engine {
         stop: u32,
         max_skip_len: u32,
         correct_reads_for_clipping: bool,
+        interner: &mut OurInterner,
     ) -> Result<Vec<(AnnotatedRead, usize)>> {
         let mut res = Vec::new();
         let max_skip_len = if correct_reads_for_clipping {
@@ -926,6 +949,9 @@ impl Engine {
         ))?;
         'outer: while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
+            /* if ii % 1000000 == 0 {
+                println!("{}:{} - {}+ reads", chr, start, ii)
+            } */
 
             let corrected_position = if correct_reads_for_clipping {
                 read.corrected_pos(max_skip_len)
@@ -1008,8 +1034,14 @@ impl Engine {
                     corrected_position: corrected_position as u32,
                     reverse: read.is_reverse(),
                     hits: Hits {
-                        correct: genes_hit_correct.clone(),
-                        reverse: genes_hit_reverse.clone(),
+                        correct: genes_hit_correct
+                            .into_iter()
+                            .map(|x| interner.get_or_intern(x))
+                            .collect(),
+                        reverse: genes_hit_reverse
+                            .into_iter()
+                            .map(|x| interner.get_or_intern(x))
+                            .collect(),
                     },
                     umi: umi,
                     barcode: barcode,
@@ -1035,6 +1067,7 @@ impl Engine {
         out_bam_path: &Path,
         header: &rust_htslib::bam::Header,
         max_skip_len: u32,
+        interner: &OurInterner
     ) -> Result<()> {
         let mut out_bam = rust_htslib::bam::Writer::from_path(
             out_bam_path.join(chunk.str_id()),
@@ -1096,7 +1129,7 @@ impl Engine {
                                 tag.push(',')
                             }
                             first = false;
-                            tag.push_str(gene);
+                            tag.push_str(interner.resolve(*gene).expect("string de-interning failed"));
                         }
                         read.replace_aux(b"XQ", rust_htslib::bam::record::Aux::String(&tag))?;
 
@@ -1107,7 +1140,7 @@ impl Engine {
                                 tag.push(',')
                             }
                             first = false;
-                            tag.push_str(gene);
+                            tag.push_str(interner.resolve(*gene).expect("string de-interning failed"));
                         }
                         read.replace_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
                         read.replace_aux(

@@ -1045,6 +1045,7 @@ dependencies = [
  "rust-htslib",
  "serde",
  "serde_valid",
+ "string-interner",
  "strum_macros 0.27.1",
  "tempfile",
  "toml",
@@ -1818,6 +1819,16 @@ dependencies = [
  "nalgebra",
  "num-traits",
  "rand 0.8.5",
+]
+
+[[package]]
+name = "string-interner"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
+dependencies = [
+ "hashbrown",
+ "serde",
 ]
 
 [[package]]

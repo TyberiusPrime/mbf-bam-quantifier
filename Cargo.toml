@@ -36,6 +36,7 @@ noodles-gtf = "0.45.0"
 nom = "8.0.0"
 memchr = "2.7.5"
 linereader = "0.4.0"
+string-interner = "0.19.0"
 
 [[bin]]
 name = "mbf-bam-quantifier-test-runner"
