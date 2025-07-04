@@ -1,6 +1,6 @@
 use ex::Wrapper;
-use std::collections::{HashMap, HashSet};
-use std::io::{BufWriter, Read, Seek, Write};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 mod chunked_genome;
@@ -184,8 +184,8 @@ pub enum Output {
     SingleCell {
         output_pretfix: PathBuf,
         features: HashMap<String, usize>,
-        barcodes: HashMap<Vec<u8>, usize>,
-        matrix_handle: Option<BufWriter<std::fs::File>>,
+        barcodes: HashSet<Vec<u8>>,
+        matrix_temp_dir: PathBuf,
         entry_count: usize,
     },
 }
@@ -224,16 +224,15 @@ impl Output {
         output_prefix: PathBuf,
         sorted_keys: Option<Vec<String>>,
     ) -> Result<Self> {
-        ex::fs::create_dir_all(&output_prefix).context("failed to create output directory")?;
-        let matrix_handle = BufWriter::new(
-            ex::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(output_prefix.join("matrix.mtx.temp"))
-                .context("Opening matrix output")?
-                .into_inner(),
-        );
+        let matrix_temp_dir = output_prefix.join("matrix.mtx.temp");
+        if matrix_temp_dir.exists() {
+            //remove the whole tree
+            ex::fs::remove_dir_all(&matrix_temp_dir)
+                .context("Failed to remove existing temp directory")?;
+        }
+        ex::fs::create_dir_all(&matrix_temp_dir)
+            .context("failed to create output directory (or the nested temp dir)")?;
+
         let mut features = HashMap::new();
         if let Some(sorted_keys) = sorted_keys.as_ref() {
             for key in sorted_keys {
@@ -243,13 +242,17 @@ impl Output {
         Ok(Output::SingleCell {
             output_pretfix: output_prefix,
             features,
-            barcodes: HashMap::new(),
-            matrix_handle: Some(matrix_handle),
+            barcodes: HashSet::new(),
+            matrix_temp_dir,
             entry_count: 0,
         })
     }
 
-    fn count_reads(&mut self, annotated_reads: &Vec<(AnnotatedRead, usize)>) -> Result<()> {
+    fn count_reads(
+        &mut self,
+        annotated_reads: &Vec<(AnnotatedRead, usize)>,
+        chunk: &Chunk,
+    ) -> Result<()> {
         match self {
             Output::PerRegion {
                 counter,
@@ -294,26 +297,18 @@ impl Output {
                 }
             }
             Output::SingleCell {
-                matrix_handle,
+                matrix_temp_dir,
                 features,
                 barcodes,
                 entry_count,
                 ..
             } => {
-                let mut out: HashMap<(usize, usize), f64> = HashMap::new();
+                //we want a consistent output order
+                let mut out: BTreeMap<(usize, _), f64> = BTreeMap::new();
                 for (read, _org_index) in annotated_reads {
                     match read {
                         AnnotatedRead::Counted(info) => {
                             if let Some(barcode) = info.barcode.as_ref() {
-                                let barcodes_len = barcodes.len();
-                                let barcode_idx = match barcodes.entry(barcode.clone()) {
-                                    std::collections::hash_map::Entry::Occupied(e) => *e.get(),
-                                    std::collections::hash_map::Entry::Vacant(e) => {
-                                        let new_index = barcodes_len;
-                                        e.insert(new_index);
-                                        new_index
-                                    }
-                                };
                                 for (gene, weight) in &info.genes_hit_correct {
                                     let features_len = features.len();
                                     let feature_idx = match features.entry(gene.clone()) {
@@ -324,7 +319,8 @@ impl Output {
                                             new_index
                                         }
                                     };
-                                    out.entry((feature_idx, barcode_idx))
+                                    barcodes.insert(barcode.clone());
+                                    out.entry((feature_idx, barcode))
                                         .and_modify(|e| *e += *weight as f64)
                                         .or_insert(*weight as f64);
                                 }
@@ -333,17 +329,19 @@ impl Output {
                         _ => {}
                     }
                 }
+                let mut matrix_handle = BufWriter::new(
+                    ex::fs::File::create(&matrix_temp_dir.join(chunk.str_id()))?.into_inner(),
+                );
+
                 //now these genes are fully measured, write them out
-                for ((feature_idx, barcode_idx), value) in out.into_iter() {
+                for ((feature_idx, barcode), value) in out.into_iter() {
                     *entry_count += 1;
                     matrix_handle
-                        .as_mut()
-                        .unwrap()
                         .write_all(
                             format!(
                                 "{} {} {}\n",
                                 feature_idx + 1, // MatrixMarket is 1-based
-                                barcode_idx + 1, // MatrixMarket is 1-based
+                                std::str::from_utf8(barcode).unwrap(),
                                 value
                             )
                             .as_bytes(),
@@ -355,7 +353,7 @@ impl Output {
         Ok(())
     }
 
-    fn finish(self) -> Result<()> {
+    fn finish(self, chunk_names: &[String]) -> Result<()> {
         match self {
             Output::PerRegion {
                 output_filename,
@@ -410,7 +408,7 @@ impl Output {
                 output_pretfix,
                 features,
                 barcodes,
-                mut matrix_handle,
+                matrix_temp_dir,
                 entry_count,
             } => {
                 let features_filename = output_pretfix.join("features.tsv");
@@ -434,17 +432,20 @@ impl Output {
 
                 let barcodes_filename = output_pretfix.join("barcodes.tsv");
                 let barcode_len = barcodes.len();
-                let sorted_barcodes = {
-                    let mut temp = barcodes
-                        .into_iter()
-                        .map(|(barcode, index)| (index, barcode))
-                        .collect::<Vec<_>>();
+                let (barcodes, barcode_to_index) = {
+                    let mut temp: Vec<_> = barcodes.into_iter().collect();
                     temp.sort();
-                    temp
+                    let lookup: HashMap<Vec<u8>, usize> = temp
+                        .iter()
+                        .enumerate()
+                        .map(|(i, b)| (b.clone(), i + 1))
+                        .collect();
+
+                    (temp, lookup)
                 };
                 let mut barcode_file =
                     BufWriter::new(ex::fs::File::create(&barcodes_filename)?.into_inner());
-                for (_, barcode) in sorted_barcodes {
+                for barcode in barcodes {
                     barcode_file
                         .write_all(format!("{}\n", String::from_utf8_lossy(&barcode)).as_bytes())
                         .context("Failed to write barcodes to file")?;
@@ -452,13 +453,6 @@ impl Output {
                 //matrix file has a header with nrow, ncols, nentries, so we need to push it into a
                 //new file.
                 let matrix_filename = output_pretfix.join("matrix.mtx");
-                let mut matrix_handle = matrix_handle.take().unwrap();
-                matrix_handle
-                    .flush()
-                    .context("Failed to flush matrix file")?;
-                let mut matrix_handle = matrix_handle
-                    .into_inner()
-                    .context("Could not retrieve file from bufwriter")?;
 
                 let mut matrix_out = ex::fs::File::create(&matrix_filename)?;
                 matrix_out.write_all(
@@ -469,18 +463,54 @@ impl Output {
                         format!("{} {} {}\n", feature_len, barcode_len, entry_count,).as_bytes(),
                     )
                     .context("Failed to write header to matrix file")?;
-                matrix_handle.seek(std::io::SeekFrom::Start(0))?;
-                std::io::copy(&mut matrix_handle, &mut matrix_out)
-                    .context("Failed to copy matrix file content")?;
-                //remove temp file
-                let matrix_temp_filename = output_pretfix.join("matrix.mtx.temp");
-                if matrix_temp_filename.exists() {
-                    ex::fs::remove_file(&matrix_temp_filename)
-                        .context("Failed to remove temporary matrix file")?;
+
+                let sorted_chunk_names: Vec<_> = chunk_names.iter().sorted().collect();
+                dbg!(&sorted_chunk_names);
+
+                for chunk_str_id in sorted_chunk_names {
+                    let temp_filename = matrix_temp_dir.join(chunk_str_id);
+                    let temp_handle = BufReader::new(ex::fs::File::open(&temp_filename)
+                        .context("Failed to open temporary matrix file")?.into_inner());
+                    for line in temp_handle.lines() {
+                        let line = line.context("Failed to read line from temporary matrix file")?;
+                        let mut parts = line.split_whitespace();
+                        let feature_idx: usize = parts
+                            .next()
+                            .context("Missing feature index in line")?
+                            .parse()
+                            .context("Failed to parse feature index")?;
+                        let barcode = parts
+                            .next()
+                            .context("Missing barcode in line")?
+                            .as_bytes()
+                            .to_vec();
+                        let value: f64 = parts
+                            .next()
+                            .context("Missing value in line")?
+                            .parse()
+                            .context("Failed to parse value")?;
+
+                        if let Some(&barcode_index) = barcode_to_index.get(&barcode) {
+                            matrix_out.write_all(
+                                format!(
+                                    "{} {} {}\n",
+                                    feature_idx, // we already added +1
+                                    barcode_index,
+                                    value
+                                )
+                                .as_bytes(),
+                            )?;
+                        }
+                    }
+                }
+
+                if matrix_temp_dir.exists() {
+                    ex::fs::remove_dir_all(&matrix_temp_dir)
+                    .context("Failed to remove temporary matrix directory")?;
                 } else {
                     bail!(
-                        "Temporary matrix file did not exist, what did we just copy?: {}",
-                        matrix_temp_filename.display()
+                        "Temporary matrix dir did not exist, what did we just copy?: {}",
+                        matrix_temp_dir.display()
                     );
                 }
             }
@@ -744,7 +774,7 @@ impl Engine {
                     match lock {
                         Ok(mut output) => {
                             output
-                                .count_reads(&annotated_reads)
+                                .count_reads(&annotated_reads, &chunk)
                                 .context("Failed to count reads")?;
                         }
                         Err(_) => bail!("Another thread panicked, output no longer available."),
@@ -776,7 +806,7 @@ impl Engine {
         let output = output
             .into_inner()
             .context("Failed to unlock output mutex")?;
-        output.finish()?;
+        output.finish(&chunk_names)?;
 
         if let Some((temp_dir, output_header)) = output_bam_info {
             combine_temporary_bams(&chunk_names, temp_dir, output_prefix, output_header)?;
