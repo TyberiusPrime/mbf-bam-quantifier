@@ -14,8 +14,8 @@
 	mode = "non_primary"
 	action = "remove"
 
-[quant]
-	mode = "stranded_basic"
+[dedup]
+	mode = "none"
 	direction = 'forward'
 
 

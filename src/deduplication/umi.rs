@@ -1,6 +1,6 @@
 use crate::engine::AnnotatedRead;
 
-use super::Quant;
+use super::Dedup;
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -71,8 +71,8 @@ impl UMIGrouping {
         Ok(())
     }
 }
-impl Quant for UMI {
-    fn weight_read_group(
+impl Dedup for UMI {
+    fn dedup(
         &self,
         annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
     ) -> Result<()> {

@@ -17,8 +17,8 @@
 [strategy]
    direction ='forward'
 
-[quant]
-   mode = "basic"
+[dedup]
+   mode = "none"
 
 [output]
    directory = "output"

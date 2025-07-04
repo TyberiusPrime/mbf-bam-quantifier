@@ -8,8 +8,8 @@
 [strategy]
 	direction = 'ignore'
 
-[quantification]
-   mode = "basic"
+[dedup]
+   mode = "none"
 
 
 [output]

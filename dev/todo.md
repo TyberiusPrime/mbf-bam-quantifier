@@ -19,7 +19,7 @@
 
 
 - what happens whith multi mappers that map multiple times in one read
-    - my old code didn't count them. think we should reimplement that...
+    - my old code didn't count the multiple times. think we should reimplement that...
     - perhaps by a filter on the AnnotatedReads...
 
 - gene level quantification for the non -position specific scRNAseqs..
@@ -40,4 +40,5 @@
 - add individual read consideration test cases (the compare-to-others approach is difficult to debug when it fails).
 - add star solo spliced reads test case (and dataset)
 - figure out why starsolo is padding / truncated umis to 10bp (what?!)
-
+- memory limitation workarounds.
+- do the umi dedup before assign the reads to the genes - that should give us a bit of a speed boost / same some ram/

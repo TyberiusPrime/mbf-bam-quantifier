@@ -18,8 +18,8 @@
 	multi_region = 'drop'
 	direction = 'forward'
 
-[quant]
-   mode = "basic"
+[dedup]
+   mode = "none"
 
 [output]
     directory = 'output'

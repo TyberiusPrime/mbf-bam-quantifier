@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_valid::Validate;
 
-use crate::{extractors::UMIExtraction, quantification::{Quant, Quantification},
+use crate::{extractors::UMIExtraction, deduplication::{DeduplicationStrategy, Dedup},
 barcodes::CellBarcodes};
 
 #[derive(Deserialize, Debug, Clone)]
@@ -17,8 +17,8 @@ pub struct Config {
     pub input: Input,
     #[serde(default)]
     pub filter: Vec<crate::filters::Filter>,
-    #[serde(alias = "quant")]
-    pub quantification: Quantification,
+    #[serde(alias = "deduplication")]
+    pub dedup: DeduplicationStrategy,
 
     #[serde(default)]
     pub strategy: Strategy,
@@ -196,7 +196,7 @@ pub struct Output {
 
 impl Config {
     pub fn check(&self) -> Result<()> {
-        self.quantification.check(self)?;
+        self.dedup.check(self)?;
         Ok(())
     }
 

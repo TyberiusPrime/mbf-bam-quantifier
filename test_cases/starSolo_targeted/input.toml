@@ -41,7 +41,7 @@
 	overlap ='intersection_strict'
 	direction = 'Forward'
 
-[quant]
+[dedup]
    mode = "sc"
    umi_grouping = 'unique'
 

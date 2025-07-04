@@ -11,7 +11,7 @@
 [strategy]
 	direction = 'ignore'
 
-[quant]
+[dedup]
 	mode = "umi"
 	umi_grouping = "unique"
 

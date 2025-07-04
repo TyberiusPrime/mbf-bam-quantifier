@@ -16,8 +16,8 @@
 [strategy]
 	direction = 'ignore'
 
-[quant]
-   mode = "basic"
+[dedup]
+   mode = "none"
 
 
 [output]

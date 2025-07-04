@@ -2,8 +2,8 @@
 [input]
 	bam = "input.bam"
 
-[quant]
-   mode = "unstranded_basic"
+[dedup]
+   mode = "none"
 
 
 [output]

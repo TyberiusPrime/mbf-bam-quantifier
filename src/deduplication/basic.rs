@@ -1,4 +1,4 @@
-use super::{Quant};
+use super::{Dedup};
 use anyhow::Result;
 
 
@@ -9,9 +9,9 @@ use anyhow::Result;
 pub struct Basic {
 }
 
-impl Quant for Basic {
+impl Dedup for Basic {
 
-    fn weight_read_group(
+    fn dedup(
         &self,
         _annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
     ) -> Result<()> {

@@ -9,7 +9,7 @@ use crate::bam_ext::BamRecordExtensions;
 use crate::extractors::UMIExtractor;
 use crate::filters::ReadFilter;
 use crate::gtf::Strand;
-use crate::quantification::{Quant, Quantification};
+use crate::deduplication::{Dedup, DeduplicationStrategy};
 use anyhow::{bail, Context, Result};
 use bio::data_structures::interval_tree::IntervalTree;
 use chunked_genome::{Chunk, ChunkedGenome};
@@ -592,7 +592,7 @@ impl Output {
 }
 
 pub struct Engine {
-    quantifier: Quantification,
+    dedup_strategy: DeduplicationStrategy,
     filters: Vec<crate::filters::Filter>,
     matcher: ReadToGeneMatcher,
     umi_extractor: Option<crate::extractors::UMIExtraction>,
@@ -607,7 +607,7 @@ impl Engine {
         entry_id_attribute: &str,
         aggregation_id_attribute: &str,
         filters: Vec<crate::filters::Filter>,
-        quantifier: Quantification,
+        dedup_strategy: DeduplicationStrategy,
         umi_extractor: Option<crate::extractors::UMIExtraction>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
@@ -644,7 +644,7 @@ impl Engine {
                 count_strategy,
             }),
             filters,
-            quantifier,
+            dedup_strategy,
             umi_extractor,
             cell_barcode,
             output: Arc::new(Mutex::new(output)),
@@ -653,7 +653,7 @@ impl Engine {
     pub fn from_references(
         references: Vec<(String, u64)>,
         filters: Vec<crate::filters::Filter>,
-        quantifier: Quantification,
+        dedup_strategy: DeduplicationStrategy,
         umi_extractor: Option<crate::extractors::UMIExtraction>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
@@ -679,7 +679,7 @@ impl Engine {
                 count_strategy,
             }),
             filters,
-            quantifier,
+            dedup_strategy,
             umi_extractor,
             cell_barcode,
             output: Arc::new(Mutex::new(output)),
@@ -689,7 +689,7 @@ impl Engine {
     pub fn from_bam_tag(
         tag: [u8; 2],
         filters: Vec<crate::filters::Filter>,
-        quantifier: Quantification,
+        dedup_strategy: DeduplicationStrategy,
         umi_extractor: Option<crate::extractors::UMIExtraction>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         output: Output,
@@ -705,7 +705,7 @@ impl Engine {
         Engine {
             matcher: ReadToGeneMatcher::TagMatcher(TagMatcher { tag }),
             filters,
-            quantifier,
+            dedup_strategy,
             umi_extractor,
             cell_barcode,
             output: Arc::new(Mutex::new(output)),
@@ -835,8 +835,8 @@ impl Engine {
                     }
 
                     for (start, stop) in change_indices.iter().tuple_windows() {
-                        self.quantifier
-                            .weight_read_group(&mut annotated_reads[*start..*stop])
+                        self.dedup_strategy
+                            .dedup(&mut annotated_reads[*start..*stop])
                             .context("weighting failed")?;
                     }
 

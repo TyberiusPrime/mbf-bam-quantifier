@@ -19,8 +19,8 @@
 	overlap = 'union'
     multi_region = 'drop'
 
-[quant]
-   mode = "basic"
+[dedup]
+   mode = "none"
 
 [output]
     directory = 'output'

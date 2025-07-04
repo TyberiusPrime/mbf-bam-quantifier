@@ -27,8 +27,8 @@
 	overlap = 'intersection_non_empty'
     multi_region = 'count_both'
 
-[quant]
-   mode = "basic"
+[dedup]
+   mode = "none"
 
 [output]
     directory = 'output'

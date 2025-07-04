@@ -1,6 +1,6 @@
 use crate::engine::AnnotatedRead;
 
-use super::Quant;
+use super::Dedup;
 use anyhow::{Result, bail};
 use itertools::Itertools;
 
@@ -13,7 +13,7 @@ pub struct SingleCell {
     umi_grouping: UMIGrouping,
 }
 
-impl Quant for SingleCell {
+impl Dedup for SingleCell {
 
     fn check(&self, config: &crate::config::Config) -> anyhow::Result<()> {
         if config.cell_barcodes.is_none() {
@@ -24,7 +24,7 @@ impl Quant for SingleCell {
         }
         Ok(())
     }
-    fn weight_read_group(
+    fn dedup(
         &self,
         annotated_reads: &mut [(AnnotatedRead, usize)],
     ) -> Result<()> {

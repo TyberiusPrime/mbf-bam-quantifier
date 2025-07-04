@@ -19,8 +19,8 @@
 	multi_region = 'count_both'
 	direction = 'reverse'
 
-[quant]
-   mode = "basic"
+[dedup]
+   mode = "none"
 
 [output]
    directory = "output"
