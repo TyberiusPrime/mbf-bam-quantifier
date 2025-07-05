@@ -38,7 +38,7 @@ impl UMIGrouping {
                 let mut to_mark_duplicate = Vec::new();
                 for (_, indices) in by_umi {
                     if indices.len() == 1 {
-                        //only one read with this UMI, keep it. No need ot achange it.
+                        //only one read with this UMI, keep it. No need ot change it.
                         continue;
                     }
                     // multiple reads with the same UMI
@@ -62,6 +62,17 @@ impl UMIGrouping {
                         }
                     }
                 }
+                assert!(to_mark_duplicate.len() < annotated_reads.len());
+                if annotated_reads.iter().any(|(anno_read, _)| {
+                    if let AnnotatedRead::Counted(info) = anno_read {
+                        info.corrected_position == 504465 -1
+                    } else {
+                        false
+                    }
+                }) {
+                    dbg!(&annotated_reads);
+                    dbg!(&to_mark_duplicate);
+                }
 
                 for idx in to_mark_duplicate {
                     annotated_reads[idx].0 = AnnotatedRead::Duplicate;
@@ -72,10 +83,7 @@ impl UMIGrouping {
     }
 }
 impl Dedup for UMI {
-    fn dedup(
-        &self,
-        annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)],
-    ) -> Result<()> {
+    fn dedup(&self, annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)]) -> Result<()> {
         self.umi_grouping.weight_read_group(annotated_reads)
     }
 }

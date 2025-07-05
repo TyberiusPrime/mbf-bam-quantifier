@@ -1,3 +1,4 @@
+#![allow(dead_code)] //todo: remove!
 use anyhow::{Context, Result};
 use std::path::Path;
 

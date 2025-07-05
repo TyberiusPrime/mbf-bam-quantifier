@@ -42,3 +42,13 @@
 - figure out why starsolo is padding / truncated umis to 10bp (what?!)
 - memory limitation workarounds.
 - do the umi dedup before assign the reads to the genes - that should give us a bit of a speed boost / same some ram/
+
+
+- I think I can use less memory and save on sorting, if I 
+  change the annotate-reads->sort-reads->count to a
+  'count reads until next position (that takes a &mut HashMap<(position) ,annotated-reads-forward/reverse), 
+  then when that returns, processes all positions which no position correction for S 
+  can possibly occur, and then discards those eagerly. add in a final flush, and that should work,
+  but limit our memory usage from <all-reads-within-chunk> to <max-no-of-reads-in-a-max-skip-sized-area>,
+  the later being always smaller
+

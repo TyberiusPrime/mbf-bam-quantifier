@@ -1,4 +1,5 @@
 use super::OurTree;
+use anyhow::Result;
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
 use std::collections::HashMap;
@@ -10,24 +11,46 @@ pub struct ChunkedGenome<'a> {
     chromosomes: Vec<String>,
 }
 
+pub fn tids_with_reads(bam: &mut bam::IndexedReader) -> Result<Vec<u32>> {
+    let keep_tids: Vec<u32> = bam
+        .index_stats()?
+        .iter()
+        .filter_map(|(tid, _length, mapped_count, _unmapped_count)| {
+            if *mapped_count > 0 {
+                //since we're not dealing with the last one, which is -1 in i64
+                Some((*tid).try_into().expect("SAM tid should fit into u32"))
+            } else {
+                None
+            }
+        })
+        .collect();
+    Ok(keep_tids)
+}
+
 impl<'a> ChunkedGenome<'a> {
     ///create a new chunked genome for iteration
     ///if you pass in a tree, it is guaranteed that the splits happen
     ///between entries of the tree, not inside.
     pub fn new(
         trees: &'a HashMap<String, (OurTree, Vec<String>)>,
-        bam: bam::IndexedReader,
-    ) -> ChunkedGenome<'a> {
+        mut bam: bam::IndexedReader,
+    ) -> Result<ChunkedGenome<'a>> {
+        let keep_tids = tids_with_reads(&mut bam)?;
         let chrs_in_tree_and_bam = trees
             .keys()
-            .filter(|x| bam.header().tid(x.as_bytes()).is_some())
+            .filter(|x| {
+                bam.header()
+                    .tid(x.as_bytes())
+                    .map(|tid| keep_tids.iter().any(|x| x == &tid))
+                    .unwrap_or(false)
+            })
             .cloned()
             .collect();
-        ChunkedGenome {
+        Ok(ChunkedGenome {
             chromosomes: chrs_in_tree_and_bam,
             trees: Some(trees),
             bam,
-        }
+        })
     }
 
     /* pub fn new_without_tree(bam: bam::IndexedReader) -> ChunkedGenome {

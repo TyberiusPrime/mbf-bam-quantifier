@@ -159,7 +159,7 @@ pub enum ReadToGeneMatcher {
 }
 
 impl ReadToGeneMatcher {
-    fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Vec<Chunk> {
+    fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Result<Vec<Chunk>> {
         match self {
             ReadToGeneMatcher::TreeMatcher(matcher) => matcher.generate_chunks(bam),
             ReadToGeneMatcher::TagMatcher(matcher) => matcher.generate_chunks(bam),
@@ -181,6 +181,109 @@ impl ReadToGeneMatcher {
                 matcher.hits(chr, chunk_start, chunk_stop, read)
             }
         }
+    }
+}
+
+pub enum CounterPerChunk {
+    PerRegion {
+        counter: HashMap<string_interner::symbol::SymbolU32, (usize, usize)>,
+        stat_counter: HashMap<String, usize>,
+    },
+    SingleCell {
+        stat_counter: HashMap<String, usize>,
+        counter: HashMap<(string_interner::symbol::SymbolU32, Vec<u8>), usize>,
+    },
+}
+
+impl CounterPerChunk {
+    fn count_reads(&mut self, annotated_reads: &Vec<(AnnotatedRead, usize)>) -> Result<()> {
+        match self {
+            CounterPerChunk::PerRegion {
+                counter,
+                stat_counter,
+                ..
+            } => {
+                for (read, _org_index) in annotated_reads {
+                    let count_as = match read {
+                        AnnotatedRead::Counted(info) => {
+                            let hits = &info.hits;
+                            for gene in &hits.correct {
+                                let entry = counter.entry(*gene).or_insert((0, 0));
+                                entry.0 = entry.0.saturating_add(1)
+                            }
+                            for gene in &hits.reverse {
+                                let entry = counter.entry(*gene).or_insert((0, 0));
+                                entry.1 = entry.1.saturating_add(1)
+                            }
+                            match (hits.correct.is_empty(), hits.reverse.is_empty()) {
+                                (true, true) => "outside",
+                                (false, true) => "correct",
+                                (true, false) => "reverse",
+                                (false, false) => "ambiguous",
+                            }
+                        }
+                        AnnotatedRead::Filtered => "filtered",
+                        AnnotatedRead::NotInRegion => {
+                            //these are 'accidential overfetches'
+                            "overfetch"
+                        }
+                        AnnotatedRead::Duplicate => "duplicate",
+                        AnnotatedRead::NoBarcode => "no_barcode",
+
+                        AnnotatedRead::NoUMI => "no_umi",
+                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_whitelist",
+                    };
+                    if count_as != "overfetch" {
+                        //todo: preinsert values
+                        *stat_counter.entry(count_as.to_string()).or_default() += 1;
+                    }
+                }
+            }
+            CounterPerChunk::SingleCell {
+                stat_counter,
+                counter,
+            } => {
+                //we want a consistent output order
+                for (read, _org_index) in annotated_reads {
+                    let count_as = match read {
+                        AnnotatedRead::Counted(info) => {
+                            let barcode = info.barcode.as_ref().expect("no barcode? bug");
+                            let hits = &info.hits;
+                            for gene in &hits.correct {
+                                counter
+                                    .entry((*gene, barcode.clone()))
+                                    .and_modify(|e| *e += 1)
+                                    .or_insert(1);
+                            }
+                            match (hits.correct.is_empty(), hits.reverse.is_empty()) {
+                                (true, true) => "outside",
+                                (false, true) => "correct",
+                                (true, false) => "reverse",
+                                (false, false) => "ambiguous",
+                            }
+                        }
+                        AnnotatedRead::Filtered => "filtered",
+                        AnnotatedRead::NotInRegion =>
+                        //these are 'accidential overfetches'
+                        {
+                            "overfetch"
+                        }
+
+                        AnnotatedRead::Duplicate => "duplicate",
+
+                        AnnotatedRead::NoBarcode => "no_barcode",
+
+                        AnnotatedRead::NoUMI => "no_umi",
+                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_whitelist",
+                    };
+                    if count_as != "overfetch" {
+                        //todo: preinsert values
+                        *stat_counter.entry(count_as.to_string()).or_default() += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -279,11 +382,25 @@ impl Output {
         })
     }
 
+    pub fn per_chunk(&self) -> CounterPerChunk {
+        match self {
+            Output::PerRegion { .. } => CounterPerChunk::PerRegion {
+                counter: HashMap::new(),
+                stat_counter: HashMap::new(),
+            },
+            Output::SingleCell { .. } => CounterPerChunk::SingleCell {
+                counter: HashMap::new(),
+                stat_counter: HashMap::new(),
+            },
+        }
+    }
+
+    //the final, we're done with this chunk, push some output
     fn count_reads(
         &mut self,
-        annotated_reads: &Vec<(AnnotatedRead, usize)>,
         chunk: &Chunk,
         interner: &OurInterner,
+        output_catcher: CounterPerChunk,
     ) -> Result<()> {
         match self {
             Output::PerRegion {
@@ -291,133 +408,74 @@ impl Output {
                 stat_counter,
                 ..
             } => {
-                for (read, _org_index) in annotated_reads {
-                    let count_as = match read {
-                        AnnotatedRead::Counted(info) => {
-                            let hits = &info.hits;
-                            for gene in &hits.correct {
-                                let entry = counter
-                                    .entry(
-                                        interner
-                                            .resolve(*gene)
-                                            .expect("string de-interning failed")
-                                            .to_string(),
-                                    )
-                                    .or_insert((0, 0));
-                                entry.0 = entry.0.saturating_add(1)
-                            }
-                            for gene in &hits.reverse {
-                                let entry = counter
-                                    .entry(
-                                        interner
-                                            .resolve(*gene)
-                                            .expect("string de-interning failed")
-                                            .to_string(),
-                                    )
-                                    .or_insert((0, 0));
-                                entry.1 = entry.1.saturating_add(1)
-                            }
-                            match (hits.correct.is_empty(), hits.reverse.is_empty()) {
-                                (true, true) => "outside",
-                                (false, true) => "correct",
-                                (true, false) => "reverse",
-                                (false, false) => "ambiguous",
-                            }
-                        }
-                        AnnotatedRead::Filtered => "filtered",
-                        AnnotatedRead::NotInRegion => {
-                            //these are 'accidential overfetches'
-                            "overfetch"
-                        }
-                        AnnotatedRead::Duplicate => "duplicate",
-                        AnnotatedRead::NoBarcode => "no_barcode",
-
-                        AnnotatedRead::NoUMI => "no_umi",
-                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_whitelist",
-                    };
-                    if count_as != "overfetch" {
-                        *stat_counter.get_mut(count_as).unwrap() += 1;
+                if let CounterPerChunk::PerRegion {
+                    counter: incoming_counter,
+                    stat_counter: incoming_stat_counter,
+                } = output_catcher
+                {
+                    for (k, v) in incoming_counter.iter() {
+                        let entry = counter
+                            .entry(interner.resolve(*k).unwrap().to_string())
+                            .or_insert((0, 0));
+                        entry.0 += v.0;
+                        entry.1 += v.1;
                     }
+                    for (k, v) in incoming_stat_counter {
+                        *stat_counter.entry(k.clone()).or_default() += v;
+                    }
+                } else {
+                    unreachable!();
                 }
             }
             Output::SingleCell {
                 matrix_temp_dir,
                 features,
                 barcodes,
-                entry_count,
                 stat_counter,
+                entry_count,
                 ..
             } => {
                 //we want a consistent output order
-                let mut out: BTreeMap<(usize, _), f64> = BTreeMap::new();
-                for (read, _org_index) in annotated_reads {
-                    let count_as = match read {
-                        AnnotatedRead::Counted(info) => {
-                            let barcode = info.barcode.as_ref().expect("no barcode? bug");
-                            let hits = &info.hits;
-                            for gene in &hits.correct {
-                                let features_len = features.len();
-                                let feature_idx = match features.entry(
-                                    interner
-                                        .resolve(*gene)
-                                        .expect("resolving string failed")
-                                        .to_string(),
-                                ) {
-                                    std::collections::hash_map::Entry::Occupied(e) => *e.get(),
-                                    std::collections::hash_map::Entry::Vacant(e) => {
-                                        let new_index = features_len;
-                                        e.insert(new_index);
-                                        new_index
-                                    }
-                                };
-                                barcodes.insert(barcode.clone());
-                                out.entry((feature_idx, barcode))
-                                    .and_modify(|e| *e += 1.0)
-                                    .or_insert(1.0);
-                            }
-                            match (hits.correct.is_empty(), hits.reverse.is_empty()) {
-                                (true, true) => "outside",
-                                (false, true) => "correct",
-                                (true, false) => "reverse",
-                                (false, false) => "ambiguous",
-                            }
-                        }
-                        AnnotatedRead::Filtered => "filtered",
-                        AnnotatedRead::NotInRegion =>
-                        //these are 'accidential overfetches'
-                        {
-                            "overfetch"
-                        }
 
-                        AnnotatedRead::Duplicate => "duplicate",
-
-                        AnnotatedRead::NoBarcode => "no_barcode",
-
-                        AnnotatedRead::NoUMI => "no_umi",
-                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_whitelist",
-                    };
-                    if count_as != "overfetch" {
-                        *stat_counter.get_mut(count_as).unwrap() += 1;
+                if let CounterPerChunk::SingleCell {
+                    counter: incoming_counter,
+                    stat_counter: incoming_stat_counter,
+                } = output_catcher
+                {
+                    for (k, v) in incoming_stat_counter {
+                        *stat_counter.entry(k.clone()).or_default() += v;
                     }
-                }
-                let mut matrix_handle = BufWriter::new(
-                    ex::fs::File::create(&matrix_temp_dir.join(chunk.str_id()))?.into_inner(),
-                );
 
-                //now these genes are fully measured, write them out
-                for ((feature_idx, barcode), value) in out.into_iter() {
-                    *entry_count += 1;
-                    matrix_handle
-                        .write_all(
-                            format!(
-                                "{} {} {}\n",
-                                feature_idx + 1, // MatrixMarket is 1-based
-                                std::str::from_utf8(barcode).unwrap(),
-                                value
+                    let mut matrix_handle = BufWriter::new(
+                        ex::fs::File::create(&matrix_temp_dir.join(chunk.str_id()))?.into_inner(),
+                    );
+
+                    //now these genes are fully measured, write them out
+                    for ((feature_ref, barcode), value) in incoming_counter.into_iter() {
+                        let feature_str = interner.resolve(feature_ref).unwrap();
+                        let features_len = features.len();
+                        let feature_idx = match features.entry(feature_str.to_string()) {
+                            std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+                            std::collections::hash_map::Entry::Vacant(e) => {
+                                let new_index = features_len;
+                                e.insert(new_index);
+                                new_index
+                            }
+                        };
+                        barcodes.insert(barcode.clone());
+                        *entry_count += 1;
+                        matrix_handle
+                            .write_all(
+                                format!(
+                                    "{} {} {}\n",
+                                    feature_idx + 1, // MatrixMarket is 1-based
+                                    std::str::from_utf8(&barcode).unwrap(),
+                                    value
+                                )
+                                .as_bytes(),
                             )
-                            .as_bytes(),
-                        )
-                        .context("Failed to write to matrix file")?;
+                            .context("Failed to write to matrix file")?;
+                    }
                 }
             }
         }
@@ -615,6 +673,11 @@ impl Output {
     }
 }
 
+struct OutputBamInfo {
+    output_bam_path: PathBuf,
+    header: rust_htslib::bam::Header,
+}
+
 pub struct Engine {
     dedup_strategy: DeduplicationStrategy,
     filters: Vec<crate::filters::Filter>,
@@ -773,13 +836,16 @@ impl Engine {
                 })?;
                 let header = rust_htslib::bam::Header::from_template(bam.header());
 
-                Some((od, header))
+                Some(OutputBamInfo {
+                    output_bam_path: od,
+                    header,
+                })
             }
 
             false => None,
         };
         let chunks = {
-            let mut chunks = self.matcher.generate_chunks(bam);
+            let mut chunks = self.matcher.generate_chunks(bam)?;
             if chunks.is_empty() {
                 bail!("No chunks generated. This might be because the BAM file is empty or the matcher did not find any regions to quantify.");
             }
@@ -813,98 +879,111 @@ impl Engine {
                         // over and over,
                         // so interning the strings is a good memory saving measure.
                         let mut interner = StringInterner::default();
-                        let mut annotated_reads = self
-                            .annotate_reads(
+                        let mut read_catcher: BTreeMap<
+                            i64,
+                            (Vec<(AnnotatedRead, usize)>, Vec<(AnnotatedRead, usize)>),
+                        > = BTreeMap::new();
+                        let mut output_catcher = self
+                            .output
+                            .lock()
+                            .expect("Another thread panicked, output no longer available.")
+                            .per_chunk();
+
+                        let mut idx_to_annotation_decision = output_bam_info
+                            .as_ref()
+                            .map(|output_bam_info| HashMap::new());
+
+                        let max_skip_len = correct_reads_for_clipping
+                            .then(|| max_skip_len)
+                            .unwrap_or(0);
+                        let mut current_pos = 0u32;
+
+                        bam.fetch((
+                            chunk.tid,
+                            chunk.start as u64,
+                            (chunk.stop + max_skip_len) as u64, // this is a correctness issue
+                                                                // We'll read unnecessary reads here,
+                                                                // just to discard them because their corrected position is beyond the region
+                                                                // but there might be a read there that is corrected to
+                                                                // be within.
+                        ))?;
+                        let mut read = bam::Record::new();
+                        let mut orig_index = 0;
+                        let mut debug_processed_ids: HashSet<i64> = HashSet::new();
+                        loop {
+                            if let Some(next_pos) = self.read_until_next_pos(
                                 &mut bam,
+                                &mut read,
+                                &mut orig_index,
                                 &chunk.chr,
-                                chunk.tid,
                                 chunk.start,
                                 chunk.stop,
                                 max_skip_len,
                                 correct_reads_for_clipping,
                                 &mut interner,
-                            )
-                            .context("Failure in quantification")?;
-                        {
-                            measure_time::info_time!(
-                                "{}:{} - sorting reads",
-                                &chunk.chr,
-                                chunk.start
-                            );
-
-                            // we still need to establish the barcode sorting, even if
-                            // correct_reads_for_clipping is false
-                            annotated_reads.sort_by(|a, b| match (&a.0, &b.0) {
-                                (
-                                    AnnotatedRead::Counted(info_a),
-                                    AnnotatedRead::Counted(info_b),
-                                ) => { info_a.corrected_position.cmp(&info_b.corrected_position) }
-                                    .then_with(|| info_a.reverse.cmp(&info_b.reverse))
-                                    .then_with(|| {
-                                        info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref())
-                                    }),
-                                (AnnotatedRead::Counted(_), _) => std::cmp::Ordering::Less,
-                                (_, AnnotatedRead::Counted(_)) => std::cmp::Ordering::Greater,
-                                _ => std::cmp::Ordering::Equal,
-                            });
-                        }
-                        {
-                            measure_time::info_time!(
-                                "{}:{} - outputing reads",
-                                &chunk.chr,
-                                chunk.start
-                            );
-
-                            let mut last_pos = None;
-                            //we can't do it without storing change_indices because we'd borrow
-                            //annotated_reads twice...
-                            let mut change_indices = Vec::new();
-                            let mut found_filtered = false;
-                            for (ii, (read, _org_index)) in annotated_reads.iter().enumerate() {
-                                let info = match read {
-                                    AnnotatedRead::Counted(info) => info,
-                                    _ => {
-                                        //we have reached the counted sector.
-                                        change_indices.push(ii);
-                                        found_filtered = true;
-                                        break;
+                                current_pos,
+                                &mut read_catcher,
+                            )? {
+                                let remaining_positions = read_catcher
+                                    .split_off(&(current_pos as i64 - max_skip_len as i64));
+                                let done_positions = read_catcher;
+                                read_catcher = remaining_positions;
+                                for (done_pos, block) in done_positions.into_iter() {
+                                    if debug_processed_ids.contains(&done_pos) {
+                                        panic!("We are processing the same position twice.Bug");
                                     }
-                                };
-                                let new_pos = Some(info.corrected_position);
-                                if new_pos != last_pos {
-                                    change_indices.push(ii);
-                                    last_pos = Some(info.corrected_position)
+                                    debug_processed_ids.insert(done_pos);
+                                    self.capture_read_block(
+                                        block,
+                                        &mut output_catcher,
+                                        idx_to_annotation_decision.as_mut(),
+                                    )?;
                                 }
-                            }
-                            if !found_filtered {
-                                change_indices.push(annotated_reads.len());
-                            }
-
-                            for (start, stop) in change_indices.iter().tuple_windows() {
-                                self.dedup_strategy
-                                    .dedup(&mut annotated_reads[*start..*stop])
-                                    .context("weighting failed")?;
-                            }
-
-                            let lock = self.output.lock();
-                            match lock {
-                                Ok(mut output) => {
-                                    output
-                                        .count_reads(&annotated_reads, &chunk, &interner)
-                                        .context("Failed to count reads")?;
-                                }
-                                Err(_) => {
-                                    bail!("Another thread panicked, output no longer available.")
-                                }
+                                current_pos = next_pos;
+                            } else {
+                                break;
                             }
                         }
+                        //capture eventual remaining blocks
+                        for (done_pos, block) in read_catcher.into_iter() {
+                            if debug_processed_ids.contains(&done_pos) {
+                                panic!("We are processing the same position twice.Bug");
+                            }
+                            for read in &block.0 {
+                                if let AnnotatedRead::Counted(info) = &read.0 {
+                                    assert_eq!(info.corrected_position as i64, done_pos);
+                                }
+                            }
 
-                        if let Some((out_bam_path, header)) = output_bam_info.as_ref() {
+                            for read in &block.1 {
+                                if let AnnotatedRead::Counted(info) = &read.0 {
+                                    assert_eq!(info.corrected_position as i64, done_pos);
+                                }
+                            }
+
+                            self.capture_read_block(
+                                block,
+                                &mut output_catcher,
+                                idx_to_annotation_decision.as_mut(),
+                            )?;
+                        }
+
+                        self.output
+                            .lock()
+                            .expect("Another thread panicked, output no longer available.")
+                            .count_reads(&chunk, &interner, output_catcher)
+                            .context("Failed to count reads")?;
+
+                        if let Some(OutputBamInfo {
+                            output_bam_path,
+                            header,
+                        }) = output_bam_info.as_ref()
+                        {
                             Self::write_annotated_reads(
                                 &mut bam,
                                 &chunk,
-                                &annotated_reads,
-                                &out_bam_path,
+                                idx_to_annotation_decision.take().unwrap(),
+                                &output_bam_path,
                                 header,
                                 max_skip_len,
                                 &interner,
@@ -929,8 +1008,12 @@ impl Engine {
             .context("Failed to unlock output mutex")?;
         output.finish(&chunk_names)?;
 
-        if let Some((temp_dir, output_header)) = output_bam_info {
-            combine_temporary_bams(&chunk_names, temp_dir, output_prefix, output_header)?;
+        if let Some(OutputBamInfo {
+            output_bam_path,
+            header,
+        }) = output_bam_info
+        {
+            combine_temporary_bams(&chunk_names, output_bam_path, output_prefix, header)?;
             /* println!(
                 "Output written to: {}",
                 output_prefix.join("annotated.bam").display()
@@ -940,46 +1023,151 @@ impl Engine {
         Ok(())
     }
 
-    fn annotate_reads(
+    fn capture_read_block(
+        &self,
+        read_block: (Vec<(AnnotatedRead, usize)>, Vec<(AnnotatedRead, usize)>),
+        output_cacher: &mut CounterPerChunk,
+        mut idx_to_annotated: Option<&mut HashMap<usize, AnnotatedRead>>,
+    ) -> Result<()> {
+        for mut block in [read_block.0, read_block.1] {
+            block.sort_by(|a, b| match (&a.0, &b.0) {
+                (AnnotatedRead::Counted(info_a), AnnotatedRead::Counted(info_b)) => {
+                    info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref())
+                }
+                (AnnotatedRead::Counted(_), _) => std::cmp::Ordering::Less,
+                (_, AnnotatedRead::Counted(_)) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            });
+
+            if let Some(last_index_not_filtered) = block.iter().rposition(|(read, _)| match read {
+                AnnotatedRead::Counted(_) => true,
+                _ => false,
+            }) {
+                self.dedup_strategy
+                    .dedup(&mut block[0..=last_index_not_filtered])
+                    .context("weighting failed")?;
+            } // none -> all reads filtered, no dedup necessary
+            output_cacher
+                .count_reads(&block)
+                .context("Failed to count reads in read block")?;
+            if let Some(idx_to_annotated) = idx_to_annotated.as_mut() {
+                for (read, org_index) in block {
+                    idx_to_annotated.insert(org_index, read);
+                }
+            }
+        }
+
+        /* // we still need to establish the barcode sorting, even if
+        // correct_reads_for_clipping is false
+                } */
+
+        /*{ measure_time::info_time!(
+                "{}:{} - outputing reads",
+                &chunk.chr,
+                chunk.start
+            );
+
+            let mut last_pos = None;
+            //we can't do it without storing change_indices because we'd borrow
+            //annotated_reads twice...
+            let mut change_indices = Vec::new();
+            let mut found_filtered = false;
+            for (ii, (read, _org_index)) in annotated_reads.iter().enumerate() {
+                let info = match read {
+                    AnnotatedRead::Counted(info) => info,
+                    _ => {
+                        //we have reached the counted sector.
+                        change_indices.push(ii);
+                        found_filtered = true;
+                        break;
+                    }
+                };
+                let new_pos = Some(info.corrected_position);
+                if new_pos != last_pos {
+                    change_indices.push(ii);
+                    last_pos = Some(info.corrected_position)
+                }
+            }
+            if !found_filtered {
+                change_indices.push(annotated_reads.len());
+            }
+
+            for (start, stop) in change_indices.iter().tuple_windows() {
+                self.dedup_strategy
+                    .dedup(&mut annotated_reads[*start..*stop])
+                    .context("weighting failed")?;
+            }
+
+            let lock = self.output.lock();
+            match lock {
+                Ok(mut output) => {
+                    output
+                        .count_reads(&annotated_reads, &chunk, &interner)
+                        .context("Failed to count reads")?;
+                }
+                Err(_) => {
+                    bail!("Another thread panicked, output no longer available.")
+                }
+            }
+        } */
+        Ok(())
+    }
+
+    fn read_until_next_pos(
         &self,
         bam: &mut rust_htslib::bam::IndexedReader,
+        read: &mut bam::Record,
+        org_index: &mut usize,
         chr: &str,
-        tid: u32,
         start: u32,
         stop: u32,
         max_skip_len: u32,
         correct_reads_for_clipping: bool,
         interner: &mut OurInterner,
-    ) -> Result<Vec<(AnnotatedRead, usize)>> {
-        let mut res = Vec::new();
-        let max_skip_len = if correct_reads_for_clipping {
-            max_skip_len
-        } else {
-            0
-        };
+        current_pos: u32,
+        read_catcher: &mut BTreeMap<
+            i64,
+            (Vec<(AnnotatedRead, usize)>, Vec<(AnnotatedRead, usize)>),
+        >,
+    ) -> Result<Option<u32>> {
+        let mut last_read_pos: Option<u32> = None;
+        'outer: loop {
+            if let Some(last_read_pos) = last_read_pos {
+                if last_read_pos > current_pos {
+                    //we are done with this chunk
+                    return Ok(Some(last_read_pos));
+                }
+            }
 
-        let mut read: bam::Record = bam::Record::new();
-        let mut ii = 0;
-        bam.fetch((
-            tid,
-            start as u64,
-            (stop + max_skip_len) as u64, // this is a correctness issue
-                                          // We'll read unnecessary reads here,
-                                          // just to discard them because their corrected position is beyond the region
-                                          // but there might be a read there that is corrected to
-                                          // be within.
-        ))?;
-        measure_time::info_time!("{}:{} - reading reads", chr, start);
-        'outer: while let Some(bam_result) = bam.read(&mut read) {
-            bam_result?;
+            match bam.read(read) {
+                Some(Ok(result)) => result,
+                Some(Err(e)) => {
+                    bail!(e);
+                }
+                None => return Ok(None),
+            };
 
             let corrected_position = if correct_reads_for_clipping {
                 read.corrected_pos(max_skip_len)
             } else {
                 Some(read.pos())
             };
+            last_read_pos = Some(
+                read.pos()
+                    .try_into()
+                    .expect("sam read position for aligned reads should always be <=2^31-1"),
+            ); //we read based on stored read position. Once that's
+               //reached x+max_skip len the outer frame can process those up to x...
 
             if let Some(corrected_position) = corrected_position {
+                let output = read_catcher
+                    .entry(corrected_position)
+                    .or_insert_with(|| (Vec::new(), Vec::new()));
+                let res = if read.is_reverse() {
+                    &mut output.1
+                } else {
+                    &mut output.0
+                };
                 if (
                     (corrected_position as u32) < start && start > 0
                     //reads in the first chunk, that would've started to the left are
@@ -988,16 +1176,16 @@ impl Engine {
                 {
                     //this ensures we count a read only in the chunk where it's left most
                     //pos is in.
-                    res.push((AnnotatedRead::NotInRegion, ii));
-                    ii += 1;
+                    res.push((AnnotatedRead::NotInRegion, *org_index));
+                    *org_index += 1;
                     continue;
                 }
 
                 for f in self.filters.iter() {
                     if f.remove_read(&read) {
                         // if the read does not pass the filter, skip it
-                        res.push((AnnotatedRead::Filtered, ii));
-                        ii += 1;
+                        res.push((AnnotatedRead::Filtered, *org_index));
+                        *org_index += 1;
                         continue 'outer;
                     }
                 }
@@ -1017,16 +1205,16 @@ impl Engine {
                                                 AnnotatedRead::BarcodeNotInWhitelist(
                                                     uncorrected.clone(),
                                                 ),
-                                                ii,
+                                                *org_index,
                                             ));
-                                            ii += 1;
+                                            *org_index += 1;
                                             continue;
                                         }
                                     }
                                 }
                                 None => {
-                                    res.push((AnnotatedRead::NoBarcode, ii));
-                                    ii += 1;
+                                    res.push((AnnotatedRead::NoBarcode, *org_index));
+                                    *org_index += 1;
                                     continue;
                                 }
                             }
@@ -1039,8 +1227,8 @@ impl Engine {
                         Some(x) => match x.extract(&read)? {
                             Some(umi) => Some(umi),
                             None => {
-                                res.push((AnnotatedRead::NoUMI, ii));
-                                ii += 1;
+                                res.push((AnnotatedRead::NoUMI, *org_index));
+                                *org_index += 1;
                                 continue;
                             }
                         },
@@ -1070,34 +1258,34 @@ impl Engine {
                         read.mapq(),
                     ),
                 };
-                res.push((AnnotatedRead::Counted(Box::new(info)), ii));
-                ii += 1;
+                res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
+                *org_index += 1;
             } else {
                 panic!("Did not expect to see an unaligned read in a chunk: {:?}, pos: {}, cigar: {} - corrected to {:?}", 
                     std::str::from_utf8(read.qname()).unwrap_or("not-uf8"), read.pos(), read.cigar(), read.corrected_pos(max_skip_len));
             }
         }
-        Ok(res)
     }
 
     fn write_annotated_reads(
         bam: &mut rust_htslib::bam::IndexedReader,
         chunk: &Chunk,
-        annotated_reads: &[(AnnotatedRead, usize)],
+        mut idx_to_annotated: HashMap<usize, AnnotatedRead>,
         out_bam_path: &Path,
         header: &rust_htslib::bam::Header,
         max_skip_len: u32,
         interner: &OurInterner,
     ) -> Result<()> {
         let mut out_bam = rust_htslib::bam::Writer::from_path(
-            out_bam_path.join(chunk.str_id()),
-            &header,
+            out_bam_path.join(format!("{}.bam", chunk.str_id())),
+            header,
             rust_htslib::bam::Format::Bam,
         )?;
-        let idx_to_annotated: HashMap<usize, &AnnotatedRead> = annotated_reads
-            .iter()
-            .map(|(read, org_index)| (*org_index, read))
-            .collect();
+        dbg!(chunk.str_id(), idx_to_annotated.len());
+        /* let idx_to_annotated: HashMap<usize, &AnnotatedRead> = annotated_reads
+        .iter()
+        .map(|(read, org_index)| (*org_index, read))
+        .collect(); */
         bam.fetch((
             chunk.tid,
             chunk.start as u64,
@@ -1110,7 +1298,7 @@ impl Engine {
         let mut ii = 0;
         while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
-            if let Some(&anno_read) = idx_to_annotated.get(&ii) {
+            if let Some(anno_read) = idx_to_annotated.get_mut(&ii) {
                 match anno_read {
                     AnnotatedRead::NotInRegion => continue,
                     AnnotatedRead::Filtered => {
@@ -1127,7 +1315,7 @@ impl Engine {
                         read.replace_aux(
                             b"CR",
                             rust_htslib::bam::record::Aux::String(
-                                std::str::from_utf8(uncorrected_barcode).unwrap_or("non-utf8"),
+                                std::str::from_utf8(&uncorrected_barcode).unwrap_or("non-utf8"),
                             ),
                         )?;
                     }
@@ -1234,7 +1422,7 @@ fn combine_temporary_bams(
                     );
                 }
                 last_pos = pos;
-                res.push(chunk_name.clone())
+                res.push(format!("{}.bam", chunk_name));
             }
         }
         res
@@ -1281,9 +1469,9 @@ pub struct TreeMatcher {
 }
 
 impl TreeMatcher {
-    fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Vec<Chunk> {
-        let cg = ChunkedGenome::new(&self.reference_to_aggregation_trees, bam); // can't get the ParallelBridge to work with our lifetimes.
-        cg.iter().collect()
+    fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Result<Vec<Chunk>> {
+        let cg = ChunkedGenome::new(&self.reference_to_aggregation_trees, bam)?; // can't get the ParallelBridge to work with our lifetimes.
+        Ok(cg.iter().collect())
     }
 
     fn hits(
@@ -1396,22 +1584,30 @@ pub struct TagMatcher {
 }
 
 impl TagMatcher {
-    fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Vec<Chunk> {
-        bam.header()
+    fn generate_chunks(&self, mut bam: rust_htslib::bam::IndexedReader) -> Result<Vec<Chunk>> {
+        let keep_tids = chunked_genome::tids_with_reads(&mut bam)?;
+
+        Ok(bam
+            .header()
             .target_names()
             .iter()
             .enumerate()
-            .map(|(tid, name)| {
+            .filter_map(|(tid, name)| {
                 let name = String::from_utf8(name.to_vec())
                     .expect("Failed to convert target name to string");
-                Chunk::new(
-                    name,
-                    tid as u32,
-                    0,
-                    bam.header().target_len(tid as u32).unwrap_or(0) as u32,
-                )
+                let tid: u32 = tid.try_into().expect("tid should fit into u32");
+                if keep_tids.iter().any(|x| *x == tid) {
+                    Some(Chunk::new(
+                        name,
+                        tid as u32,
+                        0,
+                        bam.header().target_len(tid as u32).unwrap_or(0) as u32,
+                    ))
+                } else {
+                    None
+                }
             })
-            .collect()
+            .collect())
     }
 
     fn hits(
