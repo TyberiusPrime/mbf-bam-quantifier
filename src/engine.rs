@@ -139,8 +139,8 @@ pub enum AnnotatedRead {
 
 #[derive(Debug)]
 pub struct Hits {
-    correct: HashSet<string_interner::symbol::SymbolU32>,
-    reverse: HashSet<string_interner::symbol::SymbolU32>,
+    correct: Vec<string_interner::symbol::SymbolU32>,
+    reverse: Vec<string_interner::symbol::SymbolU32>,
 }
 
 #[derive(Debug)]
@@ -172,13 +172,17 @@ impl ReadToGeneMatcher {
         chunk_start: u32,
         chunk_stop: u32,
         read: &rust_htslib::bam::record::Record,
-    ) -> Result<(HashSet<String>, HashSet<String>)> {
+        interner: &mut OurInterner,
+    ) -> Result<(
+        Vec<string_interner::symbol::SymbolU32>,
+        Vec<string_interner::symbol::SymbolU32>,
+    )> {
         match self {
             ReadToGeneMatcher::TreeMatcher(matcher) => {
-                matcher.hits(chr, chunk_start, chunk_stop, read)
+                matcher.hits(chr, chunk_start, chunk_stop, read, interner)
             }
             ReadToGeneMatcher::TagMatcher(matcher) => {
-                matcher.hits(chr, chunk_start, chunk_stop, read)
+                matcher.hits(chr, chunk_start, chunk_stop, read, interner)
             }
         }
     }
@@ -1223,7 +1227,7 @@ impl Engine {
                     }
                 };
                 let (genes_hit_correct, genes_hit_reverse) =
-                    self.matcher.hits(chr, start, stop, &read)?;
+                    self.matcher.hits(chr, start, stop, &read, interner)?;
 
                 let do_accept: AcceptReadResult = output.dedup_storage.accept_read(
                     &read,
@@ -1241,14 +1245,8 @@ impl Engine {
                             corrected_position: corrected_position as u32,
                             reverse: read.is_reverse(),
                             hits: Hits {
-                                correct: genes_hit_correct
-                                    .into_iter()
-                                    .map(|x| interner.get_or_intern(x))
-                                    .collect(),
-                                reverse: genes_hit_reverse
-                                    .into_iter()
-                                    .map(|x| interner.get_or_intern(x))
-                                    .collect(),
+                                correct: genes_hit_correct.into_iter().collect(),
+                                reverse: genes_hit_reverse.into_iter().collect(),
                             },
                             umi: umi,
                             barcode: barcode,
@@ -1268,14 +1266,8 @@ impl Engine {
                             corrected_position: corrected_position as u32,
                             reverse: read.is_reverse(),
                             hits: Hits {
-                                correct: genes_hit_correct
-                                    .into_iter()
-                                    .map(|x| interner.get_or_intern(x))
-                                    .collect(),
-                                reverse: genes_hit_reverse
-                                    .into_iter()
-                                    .map(|x| interner.get_or_intern(x))
-                                    .collect(),
+                                correct: genes_hit_correct,
+                                reverse: genes_hit_reverse,
                             },
                             umi: umi,
                             barcode: barcode,
@@ -1508,7 +1500,11 @@ impl TreeMatcher {
         chunk_start: u32,
         chunk_stop: u32,
         read: &rust_htslib::bam::record::Record,
-    ) -> Result<(HashSet<String>, HashSet<String>)> {
+        interner: &mut OurInterner,
+    ) -> Result<(
+        Vec<string_interner::symbol::SymbolU32>,
+        Vec<string_interner::symbol::SymbolU32>,
+    )> {
         use crate::config::MatchDirection;
         let (tree, gene_ids) = self
             .reference_to_count_trees
@@ -1516,8 +1512,8 @@ impl TreeMatcher {
             .expect("Chr not found in trees");
         let blocks = read.blocks();
         if let crate::config::OverlapMode::Union = self.count_strategy.overlap {
-            let mut gene_nos_seen_match = HashSet::new();
-            let mut gene_nos_seen_reverse = HashSet::new();
+            let mut gene_nos_seen_match = Vec::new();
+            let mut gene_nos_seen_reverse = Vec::new();
             for iv in blocks.iter() {
                 if (iv.1 < chunk_start)
                     || iv.0 >= chunk_stop
@@ -1565,7 +1561,11 @@ impl TreeMatcher {
                         }
                         (MatchDirection::Ignore, _, _) => &mut gene_nos_seen_match,
                     };
-                    target.insert(gene_ids[gene_no as usize].clone());
+                    let gene_id = interner.get_or_intern(&gene_ids[gene_no as usize]);
+                    if !target.iter().any(|x| *x == gene_id) {
+                        // if we haven't seen this gene yet, add it
+                        target.push(gene_id);
+                    }
                 }
             }
             for gg in [&mut gene_nos_seen_match, &mut gene_nos_seen_reverse] {
@@ -1584,8 +1584,8 @@ impl TreeMatcher {
 
             Ok((gene_nos_seen_match, gene_nos_seen_reverse))
         } else {
-            let mut gene_nos_seen_match = HashMap::<String, HashSet<u32>>::new();
-            let mut gene_nos_seen_reverse = HashMap::<String, HashSet<u32>>::new();
+            let mut gene_nos_seen_match = HashMap::<string_interner::symbol::SymbolU32, HashSet<u32>>::new();
+            let mut gene_nos_seen_reverse = HashMap::<string_interner::symbol::SymbolU32, HashSet<u32>>::new();
             let mut bases_aligned = 0u32;
             for iv in blocks.iter() {
                 bases_aligned += iv.1 - iv.0;
@@ -1643,8 +1643,9 @@ impl TreeMatcher {
                         }
                         (MatchDirection::Ignore, _, _) => &mut gene_nos_seen_match,
                     };
+                    let gene_id = interner.get_or_intern(&gene_ids[gene_no as usize]);
                     target
-                        .entry(gene_ids[gene_no as usize].clone())
+                        .entry(gene_id)
                         .and_modify(|e| e.extend(&overlap_range))
                         .or_insert(overlap_range);
                 }
@@ -1729,11 +1730,15 @@ impl TagMatcher {
         _start: u32,
         _stop: u32,
         read: &rust_htslib::bam::Record,
-    ) -> Result<(HashSet<String>, HashSet<String>)> {
-        let mut genes_hit_correct = HashSet::new();
-        let genes_hit_reverse = HashSet::new();
+        interner: &mut OurInterner,
+    ) -> Result<(
+        Vec<string_interner::symbol::SymbolU32>,
+        Vec<string_interner::symbol::SymbolU32>,
+    )> {
+        let mut genes_hit_correct = Vec::new();
+        let genes_hit_reverse = Vec::new();
         if let Ok(rust_htslib::bam::record::Aux::String(value)) = read.aux(&self.tag) {
-            genes_hit_correct.insert(value.to_string());
+            genes_hit_correct.push(interner.get_or_intern(value));
         }
         Ok((genes_hit_correct, genes_hit_reverse))
     }
