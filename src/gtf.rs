@@ -32,10 +32,12 @@ impl GTFEntrys {
     }
 
     pub fn filter(&mut self, keep: &[bool]) {
-        if keep.len() != self.start.len() {
-            panic!("keep vector must be the same length as the GTFEntrys");
-        }
-        if keep.is_empty()  {
+        assert_eq!(
+            keep.len(),
+            self.start.len(),
+            "keep vector must be the same length as the GTFEntrys"
+        );
+        if keep.is_empty() {
             return;
         }
         let mut iter = keep.iter();
@@ -76,10 +78,10 @@ impl GTFEntrys {
 
 /// a helper that creates a vector, fills it with empty strings up to count
 /// then adds value
-/// similar to Categorical.new_empty_push
+/// similar to `Categorical.new_empty_push`
 fn vector_new_empty_push(count: u32, value: String) -> Vec<String> {
     let mut res = Vec::new();
-    res.resize(count as usize, "".to_string());
+    res.resize(count as usize, String::new());
     res.push(value);
     res
 }
@@ -109,8 +111,7 @@ impl FromStr for Strand {
         Ok(match s {
             "+" => Strand::Plus,
             "-" => Strand::Minus,
-            "." => Strand::Unstranded,
-            "_" => Strand::Unstranded,
+            "." | "_" => Strand::Unstranded,
             _ => bail!("Invalid strand value: {}", s),
         })
     }
@@ -131,8 +132,8 @@ impl From<&Strand> for i8 {
 pub fn parse_minimal(
     filename: &str,
     gff_or_gtf: GTFFormat,
-    accepted_features: HashSet<String>,
-    accepted_tags: HashSet<String>,
+    accepted_features: &HashSet<String>,
+    accepted_tags: &HashSet<String>,
 ) -> Result<HashMap<String, GTFEntrys>> {
     use linereader::LineReader; // non allocateding.
     let file = open_file(filename)?;
@@ -149,7 +150,7 @@ pub fn parse_minimal(
             continue; // skip comments
         }
         let line = std::str::from_utf8(line).context("line was not utf8")?;
-        if !line.ends_with("\n") {
+        if !line.ends_with('\n') {
             bail!(
                 "Line length exceed our buffer size, please increase the buffer size in the LineReader::with_capacity() call."
             );
@@ -234,7 +235,7 @@ pub fn parse_minimal(
             entry.count += 1;
         } else {
             //todo change to warning
-            println!("Skipping GTF line because of missing tags. Is your GTF actually a GFF?. Current format: {:?}: {:?}. Tried to parse {:?}", line, gff_or_gtf, attributes_str);
+            println!("Skipping GTF line because of missing tags. Is your GTF actually a GFF?. Current format: {line:?}: {gff_or_gtf:?}. Tried to parse {attributes_str:?}");
         }
     }
     Ok(result)

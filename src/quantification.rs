@@ -42,7 +42,7 @@ pub fn quantify(
                     .context("No aggr_id_attribute found in GTF entries")?
                     .iter()
                     .collect();
-                let mut keys: Vec<String> = keys.into_iter().map(|x| x.to_string()).collect();
+                let mut keys: Vec<String> = keys.into_iter().map(ToString::to_string).collect();
                 keys.sort();
                 keys
             };
@@ -68,7 +68,7 @@ pub fn quantify(
                 dedup_strategy,
                 umi_extraction,
                 cell_barcode,
-                strategy.clone(),
+                strategy,
                 output,
             )?
         }
@@ -86,7 +86,7 @@ pub fn quantify(
                             .context("reference name was'nt utf8")?
                             .to_string(),
                         header
-                            .target_len(tid as u32)
+                            .target_len(u32::try_from(tid).expect("too many references"))
                             .context("No length for tid?!")?,
                     ))
                 })
@@ -113,7 +113,7 @@ pub fn quantify(
                 dedup_strategy,
                 umi_extraction,
                 cell_barcode,
-                strategy.clone(),
+                strategy,
                 output,
             )?
         }

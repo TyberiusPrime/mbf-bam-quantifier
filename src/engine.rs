@@ -1676,7 +1676,7 @@ impl TagMatcher {
                         name,
                         tid,
                         0,
-                        bam.header().target_len(tid).unwrap_or(0) as u32,
+                        u32::try_from(bam.header().target_len(tid).unwrap_or(0)).expect("reference length > u32 capacitiy."),
                     ))
                 } else {
                     None

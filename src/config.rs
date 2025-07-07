@@ -218,11 +218,11 @@ impl Input {
             let mut parsed = crate::gtf::parse_minimal(
                 &gtf_config.filename,
                 gtf_config.subformat,
-                accepted_features
+                &accepted_features
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<HashSet<_>>(),
-                accepted_tags,
+                &accepted_tags,
             )?;
             // gtfs tend to have repeated exons, when transcripts contain the same ones.
             // we filter those by default. But the way featureCounts does it
