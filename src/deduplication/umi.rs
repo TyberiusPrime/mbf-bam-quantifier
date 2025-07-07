@@ -13,7 +13,7 @@ pub enum UMIGrouping {
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct UMI {
+pub struct Umi {
     umi_grouping: UMIGrouping,
 }
 
@@ -72,7 +72,7 @@ impl UMIGrouping {
         Ok(())
     }
 }
-impl Dedup for UMI {
+impl Dedup for Umi {
     fn check(&self, config: &crate::config::Config) -> anyhow::Result<()> {
         if config.umi.is_none() {
             bail!("UMI deduplication quantification requires UMI extraction to be defined in the configuration.");
@@ -81,6 +81,6 @@ impl Dedup for UMI {
     }
 
     fn new_per_position(&self) -> super::DedupPerPosition {
-        super::DedupPerPosition::UMI(HashMap::new())
+        super::DedupPerPosition::Umi(HashMap::new())
     }
 }

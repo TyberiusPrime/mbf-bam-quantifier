@@ -4,12 +4,15 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_valid::Validate;
 
-use crate::{extractors::UMIExtraction, deduplication::{DeduplicationStrategy, Dedup},
-barcodes::CellBarcodes};
+use crate::{
+    barcodes::CellBarcodes,
+    deduplication::{Dedup, DeduplicationStrategy},
+    extractors::UMIExtraction,
+};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
@@ -36,16 +39,16 @@ fn default_max_skip_length() -> u32 {
 
 fn default_correct_reads_for_clipping() -> bool {
     true // this is the default in umi-tools
-} 
+}
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     pub bam: String,
-    #[serde(default="default_correct_reads_for_clipping")]
+    #[serde(default = "default_correct_reads_for_clipping")]
     pub correct_reads_for_clipping: bool,
     pub source: Source,
-    #[serde(default="default_max_skip_length")]
+    #[serde(default = "default_max_skip_length")]
     pub max_skip_length: u32,
 }
 
@@ -68,9 +71,9 @@ where
     let s: String = Deserialize::deserialize(deserializer)?;
     let b = s.as_bytes();
     if b.len() != 2 || b[0] != b[0].to_ascii_uppercase() || b[1] != b[1].to_ascii_uppercase() {
-        return Err(serde::de::Error::custom(format!(
-            "Tag must be exactle two uppercase letters"
-        )))?;
+        Err(serde::de::Error::custom(
+            "Tag must be exactle two uppercase letters",
+        ))?;
     }
     Ok([b[0], b[1]])
 }
@@ -82,68 +85,51 @@ pub struct BamTag {
     pub tag: [u8; 2],
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize, Copy)]
+#[derive(Deserialize, Debug, Clone, Serialize, Copy, Default)]
 pub enum DuplicateHandling {
     #[serde(alias = "collapse")]
+    #[default]
     Collapse,
     #[serde(alias = "rename")]
     Rename,
 }
 
-impl Default for DuplicateHandling {
-    fn default() -> Self {
-        DuplicateHandling::Collapse
-    }
-}
-
-#[derive(Deserialize, Debug, Clone, Serialize)]
+#[derive(Deserialize, Debug, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub enum OverlapMode {
     #[serde(alias = "union")]
+    #[default]
     Union,
     #[serde(alias = "intersection_strict")]
     IntersectionStrict,
     #[serde(alias = "intersection_non_empty")]
-    IntersectionNonEmpty
+    IntersectionNonEmpty,
 }
 
-impl Default for OverlapMode {
-    fn default() -> Self {
-        OverlapMode::Union
-    }
-}
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
+#[derive(Deserialize, Debug, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub enum MultiRegionHandling {
     #[serde(alias = "drop")]
     Drop,
     #[serde(alias = "count_both")]
+    #[default]
     CountBoth,
 }
 
-impl Default for MultiRegionHandling {
-    fn default() -> Self {
-        MultiRegionHandling::CountBoth
-    }
-}
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
+#[derive(Deserialize, Debug, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub enum MatchDirection {
     #[serde(alias = "forward")]
+    #[default]
     Forward,
     #[serde(alias = "reverse")]
     Reverse,
     #[serde(alias = "ignore")]
-    Ignore
+    Ignore,
 }
 
-impl Default for MatchDirection {
-    fn default() -> Self {
-        MatchDirection::Forward
-    }
-}
 
 #[derive(Deserialize, Debug, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -153,21 +139,16 @@ pub struct Strategy {
     #[serde(default)]
     pub multi_region: MultiRegionHandling,
     #[serde(default)]
-    pub direction: MatchDirection
+    pub direction: MatchDirection,
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize, Copy)]
+#[derive(Deserialize, Debug, Clone, Serialize, Copy, Default)]
 #[serde(deny_unknown_fields)]
 pub enum GTFFormat {
+    #[default]
     AutoDetect,
     Gff,
-    Gtf
-}
-
-impl Default for GTFFormat {
-    fn default() -> Self {
-        GTFFormat::AutoDetect
-    }
+    Gtf,
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
@@ -191,7 +172,6 @@ pub struct Output {
     pub write_annotated_bam: bool,
     #[serde(default)]
     pub only_correct: bool,
-
 }
 
 impl Config {
@@ -201,7 +181,7 @@ impl Config {
     }
 
     pub fn init(&mut self) -> Result<()> {
-        if let Some(cb) = self.cell_barcodes .as_mut() {
+        if let Some(cb) = self.cell_barcodes.as_mut() {
             cb.init()?;
         }
         Ok(())
@@ -215,7 +195,7 @@ impl Input {
         duplication_detection_id_attribute: &str,
     ) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
         if let Source::Gtf(gtf_config) = &self.source {
-            let accepted_features = vec![&gtf_config.feature];
+            let accepted_features = &[&gtf_config.feature];
             let accepted_tags: HashSet<String> = vec![
                 gtf_config.id_attribute.to_string(),
                 gtf_config
@@ -321,8 +301,6 @@ impl Input {
     } */
 }
 
-
-
 pub fn u8_from_string<'de, D>(deserializer: D) -> core::result::Result<Vec<u8>, D::Error>
 where
     D: Deserializer<'de>,
@@ -330,5 +308,3 @@ where
     let s: String = Deserialize::deserialize(deserializer)?;
     Ok(s.as_bytes().to_vec())
 }
-
-

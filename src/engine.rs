@@ -91,9 +91,7 @@ pub fn build_trees_from_gtf_merged(
         gtf_entries.start.iter(),
         gtf_entries.end.iter(),
     ) {
-        let by_chr_interval = intervals
-            .entry(*seq_name_cat_id)
-            .or_insert_with(HashMap::new);
+        let by_chr_interval = intervals.entry(*seq_name_cat_id).or_default();
         let start: u32 = (*start)
             .try_into()
             .context("Start value is not a valid u32")?;
@@ -169,9 +167,7 @@ impl ReadToGeneMatcher {
 
     fn hits(
         &self,
-        chr: &str,
-        chunk_start: u32,
-        chunk_stop: u32,
+        chunk: &Chunk,
         read: &rust_htslib::bam::record::Record,
         interner: &mut OurInterner,
     ) -> Result<(
@@ -180,10 +176,10 @@ impl ReadToGeneMatcher {
     )> {
         match self {
             ReadToGeneMatcher::TreeMatcher(matcher) => {
-                matcher.hits(chr, chunk_start, chunk_stop, read, interner)
+                matcher.hits(chunk, read, interner)
             }
             ReadToGeneMatcher::TagMatcher(matcher) => {
-                matcher.hits(chr, chunk_start, chunk_stop, read, interner)
+                matcher.hits(chunk, read, interner)
             }
         }
     }
@@ -378,7 +374,7 @@ impl Output {
         .collect();
 
         Ok(Output::SingleCell {
-            output_prefix: output_prefix,
+            output_prefix,
             stat_counter,
             features,
             barcodes: HashSet::new(),
@@ -452,7 +448,7 @@ impl Output {
                     }
 
                     let mut matrix_handle = BufWriter::new(
-                        ex::fs::File::create(&matrix_temp_dir.join(chunk.str_id()))?.into_inner(),
+                        ex::fs::File::create(matrix_temp_dir.join(chunk.str_id()))?.into_inner(),
                     );
 
                     //now these genes are fully measured, write them out
@@ -498,7 +494,7 @@ impl Output {
                 sorted_keys,
                 id_attribute,
             } => {
-                ex::fs::create_dir_all(&output_filename.parent().unwrap())?;
+                ex::fs::create_dir_all(output_filename.parent().unwrap())?;
                 let sorted_keys = sorted_keys.unwrap_or_else(|| {
                     let mut keys: Vec<_> = counter.keys().map(|x| x.to_string()).collect();
                     keys.sort();
@@ -658,7 +654,7 @@ impl Output {
         Ok(())
     }
 
-    fn write_stats(output_filename: &PathBuf, stat_counter: &HashMap<String, usize>) -> Result<()> {
+    fn write_stats(output_filename: &Path, stat_counter: &HashMap<String, usize>) -> Result<()> {
         let stat_filename = output_filename.with_file_name(format!(
             "{}.stats.tsv",
             output_filename.file_name().unwrap().to_string_lossy()
@@ -699,6 +695,7 @@ pub struct Engine {
 }
 
 impl Engine {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_gtf(
         mut gtf_entries: HashMap<String, GTFEntrys>,
         entry_kind: &str,
@@ -900,9 +897,11 @@ impl Engine {
                         let mut idx_to_annotation_decision =
                             output_bam_info.as_ref().map(|_| HashMap::new());
 
-                        let max_skip_len = correct_reads_for_clipping
-                            .then(|| max_skip_len)
-                            .unwrap_or(0);
+                        let max_skip_len = if correct_reads_for_clipping {
+                            max_skip_len
+                        } else {
+                            0
+                        };
                         let mut current_pos = 0u32;
 
                         bam.fetch((
@@ -917,39 +916,33 @@ impl Engine {
                         let mut read = bam::Record::new();
                         let mut orig_index = 0;
                         let mut debug_processed_ids: HashSet<i64> = HashSet::new();
-                        loop {
-                            if let Some(next_pos) = self.read_until_next_pos(
-                                &mut bam,
-                                &mut read,
-                                &mut orig_index,
-                                &chunk.chr,
-                                chunk.start,
-                                chunk.stop,
-                                max_skip_len,
-                                correct_reads_for_clipping,
-                                &mut interner,
-                                current_pos,
-                                &mut read_catcher,
-                            )? {
-                                let remaining_positions = read_catcher
-                                    .split_off(&(current_pos as i64 - max_skip_len as i64));
-                                let done_positions = read_catcher;
-                                read_catcher = remaining_positions;
-                                for (done_pos, block) in done_positions.into_iter() {
-                                    if debug_processed_ids.contains(&done_pos) {
-                                        panic!("We are processing the same position twice.Bug");
-                                    }
-                                    debug_processed_ids.insert(done_pos);
-                                    self.capture_read_block(
-                                        block,
-                                        &mut output_catcher,
-                                        idx_to_annotation_decision.as_mut(),
-                                    )?;
+
+                        while let Some(next_pos) = self.read_until_next_pos(
+                            &mut bam,
+                            &mut read,
+                            &mut orig_index,
+                            &chunk,
+                            max_skip_len,
+                            &mut interner,
+                            current_pos,
+                            &mut read_catcher,
+                        )? {
+                            let remaining_positions =
+                                read_catcher.split_off(&(current_pos as i64 - max_skip_len as i64));
+                            let done_positions = read_catcher;
+                            read_catcher = remaining_positions;
+                            for (done_pos, block) in done_positions.into_iter() {
+                                if debug_processed_ids.contains(&done_pos) {
+                                    panic!("We are processing the same position twice.Bug");
                                 }
-                                current_pos = next_pos;
-                            } else {
-                                break;
+                                debug_processed_ids.insert(done_pos);
+                                self.capture_read_block(
+                                    block,
+                                    &mut output_catcher,
+                                    idx_to_annotation_decision.as_mut(),
+                                )?;
                             }
+                            current_pos = next_pos;
                         }
                         //capture eventual remaining blocks
                         for (done_pos, block) in read_catcher.into_iter() {
@@ -990,7 +983,7 @@ impl Engine {
                                 &mut bam,
                                 &chunk,
                                 idx_to_annotation_decision.take().unwrap(),
-                                &output_bam_path,
+                                output_bam_path,
                                 header,
                                 max_skip_len,
                                 &interner,
@@ -1103,16 +1096,14 @@ impl Engine {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read_until_next_pos(
         &self,
         bam: &mut rust_htslib::bam::IndexedReader,
         read: &mut bam::Record,
         org_index: &mut usize,
-        chr: &str,
-        start: u32,
-        stop: u32,
+        chunk:&Chunk,
         max_skip_len: u32,
-        correct_reads_for_clipping: bool,
         interner: &mut OurInterner,
         current_pos: u32,
         read_catcher: &mut BTreeMap<i64, PerPosition>,
@@ -1134,7 +1125,7 @@ impl Engine {
                 None => return Ok(None),
             };
 
-            let corrected_position = if correct_reads_for_clipping {
+            let corrected_position = if max_skip_len>0 {
                 read.corrected_pos(max_skip_len)
             } else {
                 Some(read.pos())
@@ -1161,10 +1152,10 @@ impl Engine {
                     &mut output.reads_forward
                 };
                 if (
-                    (corrected_position as u32) < start && start > 0
+                    (corrected_position as u32) < chunk.start && chunk.start > 0
                     //reads in the first chunk, that would've started to the left are
                     //also accepted
-                ) || ((corrected_position as u32) >= stop)
+                ) || ((corrected_position as u32) >= chunk.stop)
                 {
                     //this ensures we count a read only in the chunk where it's left most
                     //pos is in.
@@ -1174,7 +1165,7 @@ impl Engine {
                 }
 
                 for f in self.filters.iter() {
-                    if f.remove_read(&read) {
+                    if f.remove_read(read) {
                         // if the read does not pass the filter, skip it
                         res.push((AnnotatedRead::Filtered, *org_index));
                         *org_index += 1;
@@ -1183,9 +1174,9 @@ impl Engine {
                 }
 
                 let barcode = {
-                    match { self.cell_barcode.as_ref() } {
+                    match  self.cell_barcode.as_ref()  {
                         Some(cb) => {
-                            let bc = cb.extract(&read).context("barcode extraction failed")?; // an error
+                            let bc = cb.extract(read).context("barcode extraction failed")?; // an error
                             match bc {
                                 Some(uncorrected) => {
                                     // if we have a barcode, correct it
@@ -1216,7 +1207,7 @@ impl Engine {
                 };
                 let umi: Option<Vec<u8>> = {
                     match self.umi_extractor.as_ref() {
-                        Some(x) => match x.extract(&read)? {
+                        Some(x) => match x.extract(read)? {
                             Some(umi) => Some(umi),
                             None => {
                                 res.push((AnnotatedRead::NoUMI, *org_index));
@@ -1228,10 +1219,10 @@ impl Engine {
                     }
                 };
                 let (genes_hit_correct, genes_hit_reverse) =
-                    self.matcher.hits(chr, start, stop, &read, interner)?;
+                    self.matcher.hits(chunk, read, interner)?;
 
                 let do_accept: AcceptReadResult = output.dedup_storage.accept_read(
-                    &read,
+                    read,
                     res.len(),
                     umi.as_ref(),
                     barcode.as_ref(),
@@ -1249,8 +1240,8 @@ impl Engine {
                                 correct: genes_hit_correct.into_iter().collect(),
                                 reverse: genes_hit_reverse.into_iter().collect(),
                             },
-                            umi: umi,
-                            barcode: barcode,
+                            umi,
+                            barcode,
                             mapping_priority: (
                                 read.no_of_alignments().try_into().unwrap_or(255),
                                 read.mapq(),
@@ -1270,8 +1261,8 @@ impl Engine {
                                 correct: genes_hit_correct,
                                 reverse: genes_hit_reverse,
                             },
-                            umi: umi,
-                            barcode: barcode,
+                            umi,
+                            barcode,
                             mapping_priority: (
                                 read.no_of_alignments().try_into().unwrap_or(255),
                                 read.mapq(),
@@ -1336,7 +1327,7 @@ impl Engine {
                         read.replace_aux(
                             b"CR",
                             rust_htslib::bam::record::Aux::String(
-                                std::str::from_utf8(&uncorrected_barcode).unwrap_or("non-utf8"),
+                                std::str::from_utf8(uncorrected_barcode).unwrap_or("non-utf8"),
                             ),
                         )?;
                     }
@@ -1379,7 +1370,7 @@ impl Engine {
                         read.replace_aux(
                             b"XP",
                             //convert back into sam's 1 based coordinates.
-                            rust_htslib::bam::record::Aux::U32(info.corrected_position + 1 as u32),
+                            rust_htslib::bam::record::Aux::U32(info.corrected_position + 1u32),
                         )?;
 
                         if let Some(cell_barcode) = info.barcode.as_ref() {
@@ -1489,6 +1480,7 @@ pub struct TreeMatcher {
     count_strategy: crate::config::Strategy,
 }
 
+
 impl TreeMatcher {
     fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Result<Vec<Chunk>> {
         let cg = ChunkedGenome::new(&self.reference_to_aggregation_trees, bam)?; // can't get the ParallelBridge to work with our lifetimes.
@@ -1497,9 +1489,7 @@ impl TreeMatcher {
 
     fn hits(
         &self,
-        chr: &str,
-        chunk_start: u32,
-        chunk_stop: u32,
+        chunk: &Chunk,
         read: &rust_htslib::bam::record::Record,
         interner: &mut OurInterner,
     ) -> Result<(
@@ -1509,16 +1499,14 @@ impl TreeMatcher {
         use crate::config::MatchDirection;
         let (tree, gene_ids) = self
             .reference_to_count_trees
-            .get(chr)
+            .get(&chunk.chr)
             .expect("Chr not found in trees");
         let blocks = read.blocks();
         if let crate::config::OverlapMode::Union = self.count_strategy.overlap {
             let mut gene_nos_seen_match = Vec::new();
             let mut gene_nos_seen_reverse = Vec::new();
             for iv in blocks.iter() {
-                if (iv.1 < chunk_start)
-                    || iv.0 >= chunk_stop
-                    || ((iv.0 < chunk_start) && (iv.1 >= chunk_start))
+                if chunk.interval_outside(iv.0, iv.1)
                 {
                     // if this block is outside of the region
                     // don't count it at all.
@@ -1591,9 +1579,7 @@ impl TreeMatcher {
             let mut bases_aligned = 0u32;
             for iv in blocks.iter() {
                 bases_aligned += iv.1 - iv.0;
-                if (iv.1 < chunk_start)
-                    || iv.0 >= chunk_stop
-                    || ((iv.0 < chunk_start) && (iv.1 >= chunk_start))
+                if chunk.interval_outside(iv.0, iv.1)
                 {
                     // if this block is outside of the region
                     // don't count it at all.
@@ -1663,7 +1649,7 @@ impl TreeMatcher {
                 bases_aligned as usize,
             );
 
-            return Ok((gene_nos_seen_match, gene_nos_seen_reverse));
+            Ok((gene_nos_seen_match, gene_nos_seen_reverse))
         }
     }
 }
@@ -1688,9 +1674,9 @@ impl TagMatcher {
                 if keep_tids.iter().any(|x| *x == tid) {
                     Some(Chunk::new(
                         name,
-                        tid as u32,
+                        tid,
                         0,
-                        bam.header().target_len(tid as u32).unwrap_or(0) as u32,
+                        bam.header().target_len(tid).unwrap_or(0) as u32,
                     ))
                 } else {
                     None
@@ -1701,9 +1687,7 @@ impl TagMatcher {
 
     fn hits(
         &self,
-        _chr: &str,
-        _start: u32,
-        _stop: u32,
+        _chunk: &Chunk,
         read: &rust_htslib::bam::Record,
         interner: &mut OurInterner,
     ) -> Result<(
@@ -1718,7 +1702,8 @@ impl TagMatcher {
         Ok((genes_hit_correct, genes_hit_reverse))
     }
 }
-fn merged_interval_length(ivs: &mut Vec<std::ops::Range<u32>>) -> usize {
+
+fn merged_interval_length(ivs: &mut [std::ops::Range<u32>]) -> usize {
     if ivs.is_empty() {
         return 0;
     }
@@ -1741,23 +1726,6 @@ fn merged_interval_length(ivs: &mut Vec<std::ops::Range<u32>>) -> usize {
     total
 }
 
-#[cfg(test)]
-mod test {
-    #[test]
-    fn test_merged_interval_lengths() {
-        use super::merged_interval_length;
-        assert_eq!(merged_interval_length(&mut vec![]), 0);
-        assert_eq!(merged_interval_length(&mut vec![0..10, 10..20, 20..30]), 30);
-        assert_eq!(merged_interval_length(&mut vec![0..10, 5..15, 10..20]), 20);
-        assert_eq!(merged_interval_length(&mut vec![0..10, 5..15, 10..25]), 25);
-        assert_eq!(merged_interval_length(&mut vec![0..10, 20..55]), 45);
-        assert_eq!(
-            merged_interval_length(&mut vec![20..30, 45..50, 28..32]),
-            10 + 5 + 2
-        );
-    }
-}
-
 fn apply_count_strategy(
     count_strategy: &crate::config::Strategy,
     gene_nos: HashMap<string_interner::symbol::SymbolU32, Vec<std::ops::Range<u32>>>,
@@ -1775,13 +1743,13 @@ fn apply_count_strategy(
         }
         crate::config::OverlapMode::IntersectionStrict => {
             //only keep those that are fully contained in the region
-            gg_len.retain(|_, v| *v == bases_aligned as usize);
+            gg_len.retain(|_, v| *v == bases_aligned);
         }
         crate::config::OverlapMode::IntersectionNonEmpty => {
-            let any_fully_contained = gg_len.values().any(|v| *v == bases_aligned as usize);
+            let any_fully_contained = gg_len.values().any(|v| *v == bases_aligned);
             if any_fully_contained {
                 // only keep those that are fully contained in the region
-                gg_len.retain(|_, v| *v == bases_aligned as usize);
+                gg_len.retain(|_, v| *v == bases_aligned);
             } else {
                 // multiple partial overlaps, keep all.
             }
@@ -1800,3 +1768,21 @@ fn apply_count_strategy(
     }
     gg_len.into_keys().collect()
 }
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_merged_interval_lengths() {
+        use super::merged_interval_length;
+        assert_eq!(merged_interval_length(&mut []), 0);
+        assert_eq!(merged_interval_length(&mut [0..10, 10..20, 20..30]), 30);
+        assert_eq!(merged_interval_length(&mut [0..10, 5..15, 10..20]), 20);
+        assert_eq!(merged_interval_length(&mut [0..10, 5..15, 10..25]), 25);
+        assert_eq!(merged_interval_length(&mut [0..10, 20..55]), 45);
+        assert_eq!(
+            merged_interval_length(&mut [20..30, 45..50, 28..32]),
+            10 + 5 + 2
+        );
+    }
+}
+
+

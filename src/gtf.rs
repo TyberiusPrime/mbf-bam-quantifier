@@ -35,7 +35,7 @@ impl GTFEntrys {
         if keep.len() != self.start.len() {
             panic!("keep vector must be the same length as the GTFEntrys");
         }
-        if keep.len() == 0 {
+        if keep.is_empty()  {
             return;
         }
         let mut iter = keep.iter();
@@ -116,9 +116,9 @@ impl FromStr for Strand {
     }
 }
 
-impl Into<i8> for &Strand {
-    fn into(self) -> i8 {
-        match self {
+impl From<&Strand> for i8 {
+    fn from(strand: &Strand) -> i8 {
+        match strand {
             Strand::Plus => 1,
             Strand::Minus => -1,
             Strand::Unstranded => 0,

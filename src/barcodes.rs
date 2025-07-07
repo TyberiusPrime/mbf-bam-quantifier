@@ -112,11 +112,9 @@ impl CellBarcodes {
         if self.max_hamming == 0 {
             return None; // No correction allowed
         }
-        for entry in whitelist {
-            if hamming(entry, part) <= self.max_hamming as u64 {
-                return Some(entry);
-            }
-        }
-        None
+        whitelist
+            .iter()
+            .find(|&entry| hamming(entry, part) <= self.max_hamming as u64)
+            .map(|v| v.as_slice())
     }
 }

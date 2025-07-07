@@ -49,7 +49,7 @@ impl UMIExtractor for RegexName {
         let name = read.qname();
         self.regex
             .captures(name)
-            .and_then(|caps| Some(caps.get(1).map(|m| name[m.start()..m.end()].to_vec())))
+            .map(|caps| caps.get(1).map(|m| name[m.start()..m.end()].to_vec()))
             .with_context(|| {
                 format!(
                     "Failed to extract from read name via regex: {}",

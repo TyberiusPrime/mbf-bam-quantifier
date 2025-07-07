@@ -106,6 +106,13 @@ impl Chunk {
     pub fn str_id(&self) -> String {
         format!("{}:{}:{}", self.chr, self.start, self.stop)
     }
+
+    pub fn interval_outside(&self, start: u32, stop:u32) -> bool {
+        self.start > stop || self.stop < start
+                /* if (iv.1 < chunk.start)
+                    || iv.0 >= chunk.stop
+                    || ((iv.0 < chunk.start) && (iv.1 >= chunk.start)) */
+    }
 }
 
 impl Iterator for ChunkedGenomeIterator<'_> {

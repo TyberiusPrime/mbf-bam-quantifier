@@ -21,8 +21,7 @@ pub fn quantify(
         crate::config::Source::Gtf(ref gtf_config) => {
             let aggr_id_attribute = gtf_config
                 .aggr_id_attribute
-                .as_ref()
-                .map(|x| x.as_str())
+                .as_deref()
                 .unwrap_or(gtf_config.id_attribute.as_str());
 
             let gtf_entries = input.read_gtf(gtf_config.duplicate_handling, aggr_id_attribute)?;

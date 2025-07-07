@@ -28,7 +28,7 @@ pub enum DeduplicationStrategy {
     NoDedup(basic::Basic), //todo: rename basic:basic
 
     #[serde(alias = "umi")]
-    UMI(umi::UMI),
+    Umi(umi::Umi),
 
     #[serde(alias = "singlecell")]
     #[serde(alias = "sc")]
@@ -43,12 +43,13 @@ enum Direction {
     Reverse,
 }
 
-#[derive(PartialOrd, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct MappingQuality {
     no_of_alignments: u8,
     mapq: u8,
     //consider deciding on cigar length as well?
 }
+
 
 impl Ord for MappingQuality {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -58,9 +59,16 @@ impl Ord for MappingQuality {
     }
 }
 
+impl PartialOrd for MappingQuality {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+
 pub enum DedupPerPosition {
     None,
-    UMI(HashMap<Vec<u8>, (usize, MappingQuality)>),
+    Umi(HashMap<Vec<u8>, (usize, MappingQuality)>),
     SingleCell(HashMap<(Vec<u8>, Vec<u8>), (usize, MappingQuality)>),
 }
 
@@ -79,8 +87,8 @@ impl DedupPerPosition {
         barcode: Option<&Vec<u8>>,
     ) -> AcceptReadResult {
         match self {
-            DedupPerPosition::None => return AcceptReadResult::New,
-            DedupPerPosition::UMI(map) => {
+            DedupPerPosition::None => AcceptReadResult::New,
+            DedupPerPosition::Umi(map) => {
                 let umi = umi
                     .expect("UMI should be extracted before deduplication")
                     .as_slice();
@@ -95,14 +103,14 @@ impl DedupPerPosition {
                             *mq = this_mq;
                             let result = AcceptReadResult::DuplicateButPrefered(*old_index);
                             *old_index = this_index;
-                            return result;
+                            result
                         } else {
                             AcceptReadResult::Duplicated
                         }
                     }
                     None => {
                         map.insert(umi.to_vec(), (this_index, this_mq));
-                        return AcceptReadResult::New;
+                        AcceptReadResult::New
                     }
                 }
             }
@@ -125,14 +133,14 @@ impl DedupPerPosition {
                             *mq = this_mq;
                             let result = AcceptReadResult::DuplicateButPrefered(*old_index);
                             *old_index = this_index;
-                            return result;
+                            result
                         } else {
                             AcceptReadResult::Duplicated
                         }
                     }
                     None => {
                         map.insert((umi.to_vec(), barcode.to_vec()), (this_index, this_mq));
-                        return AcceptReadResult::New;
+                        AcceptReadResult::New
                     }
                 }
             }
