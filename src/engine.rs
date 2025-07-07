@@ -892,9 +892,8 @@ impl Engine {
                             .expect("Another thread panicked, output no longer available.")
                             .per_chunk();
 
-                        let mut idx_to_annotation_decision = output_bam_info
-                            .as_ref()
-                            .map(|_| HashMap::new());
+                        let mut idx_to_annotation_decision =
+                            output_bam_info.as_ref().map(|_| HashMap::new());
 
                         let max_skip_len = correct_reads_for_clipping
                             .then(|| max_skip_len)
@@ -1516,95 +1515,180 @@ impl TreeMatcher {
             .get(chr)
             .expect("Chr not found in trees");
         let blocks = read.blocks();
-        let mut gene_nos_seen_match = HashMap::<String, HashSet<u32>>::new();
-        let mut gene_nos_seen_reverse = HashMap::<String, HashSet<u32>>::new();
-        let mut bases_aligned = 0u32;
-        for iv in blocks.iter() {
-            bases_aligned += iv.1 - iv.0;
-            if (iv.1 < chunk_start)
-                || iv.0 >= chunk_stop
-                || ((iv.0 < chunk_start) && (iv.1 >= chunk_start))
-            {
-                // if this block is outside of the region
-                // don't count it at all.
-                // if it is on a block boundary
-                // only count it for the left side.
-                // which is ok, since we place the blocks to the right
-                // of our intervals.
-                continue;
-            }
-            for r in tree.find(iv.0..iv.1) {
-                let entry = r.data();
-                let found_interval = r.interval();
-                let overlap_range = match self.count_strategy.overlap {
-                    crate::config::OverlapMode::Union => HashSet::new(),
-                    _ => (iv.0.max(found_interval.start)..iv.1.min(found_interval.end)).collect(),
-                };
-
-                let gene_no = entry.0;
-                let region_strand = entry.1;
-                let target = match (
-                    &self.count_strategy.direction,
-                    read.is_reverse(),
-                    region_strand,
-                ) {
-                    (MatchDirection::Forward, false, Strand::Plus) => &mut gene_nos_seen_match,
-                    (MatchDirection::Forward, false, Strand::Minus) => &mut gene_nos_seen_reverse,
-                    (MatchDirection::Forward, true, Strand::Plus) => &mut gene_nos_seen_reverse,
-                    (MatchDirection::Forward, true, Strand::Minus) => &mut gene_nos_seen_match,
-                    (MatchDirection::Forward, _, Strand::Unstranded) => &mut gene_nos_seen_match,
-
-                    (MatchDirection::Reverse, false, Strand::Plus) => &mut gene_nos_seen_reverse,
-                    (MatchDirection::Reverse, false, Strand::Minus) => &mut gene_nos_seen_match,
-                    (MatchDirection::Reverse, true, Strand::Plus) => &mut gene_nos_seen_match,
-                    (MatchDirection::Reverse, true, Strand::Minus) => &mut gene_nos_seen_reverse,
-                    (MatchDirection::Reverse, _, Strand::Unstranded) => &mut gene_nos_seen_match,
-                    (MatchDirection::Ignore, _, _) => &mut gene_nos_seen_match,
-                };
-                target
-                    .entry(gene_ids[gene_no as usize].clone())
-                    .and_modify(|e| e.extend(&overlap_range))
-                    .or_insert(overlap_range);
-            }
-        }
-
-        for gg in [&mut gene_nos_seen_match, &mut gene_nos_seen_reverse] {
-            match self.count_strategy.overlap {
-                crate::config::OverlapMode::Union => {
-                    // do nothing, we keep them all
+        if let crate::config::OverlapMode::Union = self.count_strategy.overlap {
+            let mut gene_nos_seen_match = HashSet::new();
+            let mut gene_nos_seen_reverse = HashSet::new();
+            for iv in blocks.iter() {
+                if (iv.1 < chunk_start)
+                    || iv.0 >= chunk_stop
+                    || ((iv.0 < chunk_start) && (iv.1 >= chunk_start))
+                {
+                    // if this block is outside of the region
+                    // don't count it at all.
+                    // if it is on a block boundary
+                    // only count it for the left side.
+                    // which is ok, since we place the blocks to the right
+                    // of our intervals.
+                    continue;
                 }
-                crate::config::OverlapMode::IntersectionStrict => {
-                    //only keep those that are fully contained in the region
-                    gg.retain(|_, v| v.len() == bases_aligned as usize);
+                //todo: consider using either a bitset for the overlap range,
+                //or no overlap range at all when doing Union.
+                for r in tree.find(iv.0..iv.1) {
+                    let entry = r.data();
+                    let gene_no = entry.0;
+                    let region_strand = entry.1;
+                    let target = match (
+                        &self.count_strategy.direction,
+                        read.is_reverse(),
+                        region_strand,
+                    ) {
+                        (MatchDirection::Forward, false, Strand::Plus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, false, Strand::Minus) => {
+                            &mut gene_nos_seen_reverse
+                        }
+                        (MatchDirection::Forward, true, Strand::Plus) => &mut gene_nos_seen_reverse,
+                        (MatchDirection::Forward, true, Strand::Minus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, _, Strand::Unstranded) => {
+                            &mut gene_nos_seen_match
+                        }
+
+                        (MatchDirection::Reverse, false, Strand::Plus) => {
+                            &mut gene_nos_seen_reverse
+                        }
+                        (MatchDirection::Reverse, false, Strand::Minus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, true, Strand::Plus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, true, Strand::Minus) => {
+                            &mut gene_nos_seen_reverse
+                        }
+                        (MatchDirection::Reverse, _, Strand::Unstranded) => {
+                            &mut gene_nos_seen_match
+                        }
+                        (MatchDirection::Ignore, _, _) => &mut gene_nos_seen_match,
+                    };
+                    target.insert(gene_ids[gene_no as usize].clone());
                 }
-                crate::config::OverlapMode::IntersectionNonEmpty => {
-                    let any_fully_contained =
-                        gg.values().any(|v| v.len() == bases_aligned as usize);
-                    if any_fully_contained {
-                        // only keep those that are fully contained in the region
+            }
+            for gg in [&mut gene_nos_seen_match, &mut gene_nos_seen_reverse] {
+                match self.count_strategy.multi_region {
+                    crate::config::MultiRegionHandling::Drop => {
+                        if gg.len() > 1 {
+                            // if there are multiple genes, drop them
+                            gg.clear();
+                        }
+                    }
+                    crate::config::MultiRegionHandling::CountBoth => {
+                        //do nothing.
+                    }
+                }
+            }
+
+            Ok((gene_nos_seen_match, gene_nos_seen_reverse))
+        } else {
+            let mut gene_nos_seen_match = HashMap::<String, HashSet<u32>>::new();
+            let mut gene_nos_seen_reverse = HashMap::<String, HashSet<u32>>::new();
+            let mut bases_aligned = 0u32;
+            for iv in blocks.iter() {
+                bases_aligned += iv.1 - iv.0;
+                if (iv.1 < chunk_start)
+                    || iv.0 >= chunk_stop
+                    || ((iv.0 < chunk_start) && (iv.1 >= chunk_start))
+                {
+                    // if this block is outside of the region
+                    // don't count it at all.
+                    // if it is on a block boundary
+                    // only count it for the left side.
+                    // which is ok, since we place the blocks to the right
+                    // of our intervals.
+                    continue;
+                }
+                //todo: consider using either a bitset for the overlap range,
+                //or no overlap range at all when doing Union.
+                for r in tree.find(iv.0..iv.1) {
+                    let entry = r.data();
+                    let found_interval = r.interval();
+                    let overlap_range = match self.count_strategy.overlap {
+                        crate::config::OverlapMode::Union => HashSet::new(),
+                        _ => {
+                            (iv.0.max(found_interval.start)..iv.1.min(found_interval.end)).collect()
+                        }
+                    };
+
+                    let gene_no = entry.0;
+                    let region_strand = entry.1;
+                    let target = match (
+                        &self.count_strategy.direction,
+                        read.is_reverse(),
+                        region_strand,
+                    ) {
+                        (MatchDirection::Forward, false, Strand::Plus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, false, Strand::Minus) => {
+                            &mut gene_nos_seen_reverse
+                        }
+                        (MatchDirection::Forward, true, Strand::Plus) => &mut gene_nos_seen_reverse,
+                        (MatchDirection::Forward, true, Strand::Minus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, _, Strand::Unstranded) => {
+                            &mut gene_nos_seen_match
+                        }
+
+                        (MatchDirection::Reverse, false, Strand::Plus) => {
+                            &mut gene_nos_seen_reverse
+                        }
+                        (MatchDirection::Reverse, false, Strand::Minus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, true, Strand::Plus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, true, Strand::Minus) => {
+                            &mut gene_nos_seen_reverse
+                        }
+                        (MatchDirection::Reverse, _, Strand::Unstranded) => {
+                            &mut gene_nos_seen_match
+                        }
+                        (MatchDirection::Ignore, _, _) => &mut gene_nos_seen_match,
+                    };
+                    target
+                        .entry(gene_ids[gene_no as usize].clone())
+                        .and_modify(|e| e.extend(&overlap_range))
+                        .or_insert(overlap_range);
+                }
+            }
+
+            for gg in [&mut gene_nos_seen_match, &mut gene_nos_seen_reverse] {
+                match self.count_strategy.overlap {
+                    crate::config::OverlapMode::Union => {
+                        unreachable!();
+                        // do nothing, we keep them all
+                    }
+                    crate::config::OverlapMode::IntersectionStrict => {
+                        //only keep those that are fully contained in the region
                         gg.retain(|_, v| v.len() == bases_aligned as usize);
-                    } else {
-                        // multiple partial overlaps, keep all.
+                    }
+                    crate::config::OverlapMode::IntersectionNonEmpty => {
+                        let any_fully_contained =
+                            gg.values().any(|v| v.len() == bases_aligned as usize);
+                        if any_fully_contained {
+                            // only keep those that are fully contained in the region
+                            gg.retain(|_, v| v.len() == bases_aligned as usize);
+                        } else {
+                            // multiple partial overlaps, keep all.
+                        }
+                    }
+                }
+                match self.count_strategy.multi_region {
+                    crate::config::MultiRegionHandling::Drop => {
+                        if gg.len() > 1 {
+                            // if there are multiple genes, drop them
+                            gg.clear();
+                        }
+                    }
+                    crate::config::MultiRegionHandling::CountBoth => {
+                        //do nothing.
                     }
                 }
             }
-            match self.count_strategy.multi_region {
-                crate::config::MultiRegionHandling::Drop => {
-                    if gg.len() > 1 {
-                        // if there are multiple genes, drop them
-                        gg.clear();
-                    }
-                }
-                crate::config::MultiRegionHandling::CountBoth => {
-                    //do nothing.
-                }
-            }
-        }
 
-        Ok((
-            gene_nos_seen_match.into_keys().collect(),
-            gene_nos_seen_reverse.into_keys().collect(),
-        ))
+            Ok((
+                gene_nos_seen_match.into_keys().collect(),
+                gene_nos_seen_reverse.into_keys().collect(),
+            ))
+        }
     }
 }
 
