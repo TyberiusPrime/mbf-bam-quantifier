@@ -7,7 +7,7 @@ use string_interner::StringInterner;
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
-use crate::deduplication::{Dedup, DeduplicationStrategy};
+use crate::deduplication::{AcceptReadResult, Dedup, DeduplicationStrategy};
 use crate::extractors::UMIExtractor;
 use crate::filters::ReadFilter;
 use crate::gtf::Strand;
@@ -673,6 +673,12 @@ impl Output {
     }
 }
 
+struct PerPosition {
+    reads_forward: Vec<(AnnotatedRead, usize)>,
+    reads_reverse: Vec<(AnnotatedRead, usize)>,
+    dedup_storage: crate::deduplication::DedupPerPosition,
+}
+
 struct OutputBamInfo {
     output_bam_path: PathBuf,
     header: rust_htslib::bam::Header,
@@ -879,10 +885,7 @@ impl Engine {
                         // over and over,
                         // so interning the strings is a good memory saving measure.
                         let mut interner = StringInterner::default();
-                        let mut read_catcher: BTreeMap<
-                            i64,
-                            (Vec<(AnnotatedRead, usize)>, Vec<(AnnotatedRead, usize)>),
-                        > = BTreeMap::new();
+                        let mut read_catcher: BTreeMap<i64, PerPosition> = BTreeMap::new();
                         let mut output_catcher = self
                             .output
                             .lock()
@@ -949,13 +952,13 @@ impl Engine {
                             if debug_processed_ids.contains(&done_pos) {
                                 panic!("We are processing the same position twice.Bug");
                             }
-                            for read in &block.0 {
+                            for read in &block.reads_forward {
                                 if let AnnotatedRead::Counted(info) = &read.0 {
                                     assert_eq!(info.corrected_position as i64, done_pos);
                                 }
                             }
 
-                            for read in &block.1 {
+                            for read in &block.reads_reverse {
                                 if let AnnotatedRead::Counted(info) = &read.0 {
                                     assert_eq!(info.corrected_position as i64, done_pos);
                                 }
@@ -1025,12 +1028,12 @@ impl Engine {
 
     fn capture_read_block(
         &self,
-        read_block: (Vec<(AnnotatedRead, usize)>, Vec<(AnnotatedRead, usize)>),
+        read_block: PerPosition,
         output_cacher: &mut CounterPerChunk,
         mut idx_to_annotated: Option<&mut HashMap<usize, AnnotatedRead>>,
     ) -> Result<()> {
-        for mut block in [read_block.0, read_block.1] {
-            block.sort_by(|a, b| match (&a.0, &b.0) {
+        for mut block in [read_block.reads_forward, read_block.reads_reverse] {
+            /* block.sort_by(|a, b| match (&a.0, &b.0) {
                 (AnnotatedRead::Counted(info_a), AnnotatedRead::Counted(info_b)) => {
                     info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref())
                 }
@@ -1043,10 +1046,10 @@ impl Engine {
                 AnnotatedRead::Counted(_) => true,
                 _ => false,
             }) {
-                self.dedup_strategy
-                    .dedup(&mut block[0..=last_index_not_filtered])
-                    .context("weighting failed")?;
-            } // none -> all reads filtered, no dedup necessary
+                /* self.dedup_strategy
+                .dedup(&mut block[0..=last_index_not_filtered])
+                .context("weighting failed")?; */
+            } // none -> all reads filtered, no dedup necessary */
             output_cacher
                 .count_reads(&block)
                 .context("Failed to count reads in read block")?;
@@ -1125,10 +1128,7 @@ impl Engine {
         correct_reads_for_clipping: bool,
         interner: &mut OurInterner,
         current_pos: u32,
-        read_catcher: &mut BTreeMap<
-            i64,
-            (Vec<(AnnotatedRead, usize)>, Vec<(AnnotatedRead, usize)>),
-        >,
+        read_catcher: &mut BTreeMap<i64, PerPosition>,
     ) -> Result<Option<u32>> {
         let mut last_read_pos: Option<u32> = None;
         'outer: loop {
@@ -1160,13 +1160,18 @@ impl Engine {
                //reached x+max_skip len the outer frame can process those up to x...
 
             if let Some(corrected_position) = corrected_position {
-                let output = read_catcher
-                    .entry(corrected_position)
-                    .or_insert_with(|| (Vec::new(), Vec::new()));
+                let output =
+                    read_catcher
+                        .entry(corrected_position)
+                        .or_insert_with(|| PerPosition {
+                            reads_forward: Vec::new(),
+                            reads_reverse: Vec::new(),
+                            dedup_storage: self.dedup_strategy.new_per_position(),
+                        });
                 let res = if read.is_reverse() {
-                    &mut output.1
+                    &mut output.reads_reverse
                 } else {
-                    &mut output.0
+                    &mut output.reads_forward
                 };
                 if (
                     (corrected_position as u32) < start && start > 0
@@ -1238,28 +1243,69 @@ impl Engine {
                 let (genes_hit_correct, genes_hit_reverse) =
                     self.matcher.hits(chr, start, stop, &read)?;
 
-                let info = AnnotatedReadInfo {
-                    corrected_position: corrected_position as u32,
-                    reverse: read.is_reverse(),
-                    hits: Hits {
-                        correct: genes_hit_correct
-                            .into_iter()
-                            .map(|x| interner.get_or_intern(x))
-                            .collect(),
-                        reverse: genes_hit_reverse
-                            .into_iter()
-                            .map(|x| interner.get_or_intern(x))
-                            .collect(),
-                    },
-                    umi: umi,
-                    barcode: barcode,
-                    mapping_priority: (
-                        read.no_of_alignments().try_into().unwrap_or(255),
-                        read.mapq(),
-                    ),
-                };
-                res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
-                *org_index += 1;
+                let do_accept: AcceptReadResult = output.dedup_storage.accept_read(
+                    &read,
+                    res.len(),
+                    umi.as_ref(),
+                    barcode.as_ref(),
+                );
+                match do_accept {
+                    AcceptReadResult::Duplicated => {
+                        res.push((AnnotatedRead::Duplicate, *org_index));
+                        *org_index += 1;
+                    }
+                    AcceptReadResult::New => {
+                        let info = AnnotatedReadInfo {
+                            corrected_position: corrected_position as u32,
+                            reverse: read.is_reverse(),
+                            hits: Hits {
+                                correct: genes_hit_correct
+                                    .into_iter()
+                                    .map(|x| interner.get_or_intern(x))
+                                    .collect(),
+                                reverse: genes_hit_reverse
+                                    .into_iter()
+                                    .map(|x| interner.get_or_intern(x))
+                                    .collect(),
+                            },
+                            umi: umi,
+                            barcode: barcode,
+                            mapping_priority: (
+                                read.no_of_alignments().try_into().unwrap_or(255),
+                                read.mapq(),
+                            ),
+                        };
+                        res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
+                        *org_index += 1;
+                    }
+                    AcceptReadResult::DuplicateButPrefered(idx_to_set_duplicate) => {
+                        let (_old, old_org_index) = &res[idx_to_set_duplicate];
+                        res[idx_to_set_duplicate] = (AnnotatedRead::Duplicate, *old_org_index);
+
+                        let info = AnnotatedReadInfo {
+                            corrected_position: corrected_position as u32,
+                            reverse: read.is_reverse(),
+                            hits: Hits {
+                                correct: genes_hit_correct
+                                    .into_iter()
+                                    .map(|x| interner.get_or_intern(x))
+                                    .collect(),
+                                reverse: genes_hit_reverse
+                                    .into_iter()
+                                    .map(|x| interner.get_or_intern(x))
+                                    .collect(),
+                            },
+                            umi: umi,
+                            barcode: barcode,
+                            mapping_priority: (
+                                read.no_of_alignments().try_into().unwrap_or(255),
+                                read.mapq(),
+                            ),
+                        };
+                        res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
+                        *org_index += 1;
+                    }
+                }
             } else {
                 panic!("Did not expect to see an unaligned read in a chunk: {:?}, pos: {}, cigar: {} - corrected to {:?}", 
                     std::str::from_utf8(read.qname()).unwrap_or("not-uf8"), read.pos(), read.cigar(), read.corrected_pos(max_skip_len));

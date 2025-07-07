@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::engine::AnnotatedRead;
 
 use super::Dedup;
@@ -24,6 +26,11 @@ impl Dedup for SingleCell {
         }
         Ok(())
     }
+
+    fn new_per_position(&self) -> super::DedupPerPosition {
+        super::DedupPerPosition::SingleCell(HashMap::new())
+    }
+
     fn dedup(
         &self,
         annotated_reads: &mut [(AnnotatedRead, usize)],

@@ -63,16 +63,6 @@ impl UMIGrouping {
                     }
                 }
                 assert!(to_mark_duplicate.len() < annotated_reads.len());
-                if annotated_reads.iter().any(|(anno_read, _)| {
-                    if let AnnotatedRead::Counted(info) = anno_read {
-                        info.corrected_position == 504465 -1
-                    } else {
-                        false
-                    }
-                }) {
-                    dbg!(&annotated_reads);
-                    dbg!(&to_mark_duplicate);
-                }
 
                 for idx in to_mark_duplicate {
                     annotated_reads[idx].0 = AnnotatedRead::Duplicate;
@@ -85,5 +75,10 @@ impl UMIGrouping {
 impl Dedup for UMI {
     fn dedup(&self, annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)]) -> Result<()> {
         self.umi_grouping.weight_read_group(annotated_reads)
+    }
+
+
+    fn new_per_position(&self) -> super::DedupPerPosition {
+        super::DedupPerPosition::UMI(HashMap::new())
     }
 }
