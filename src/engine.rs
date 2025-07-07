@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use string_interner::symbol::SymbolU32;
 use string_interner::StringInterner;
 mod chunked_genome;
 
@@ -1581,11 +1582,12 @@ impl TreeMatcher {
                     }
                 }
             }
-
             Ok((gene_nos_seen_match, gene_nos_seen_reverse))
         } else {
-            let mut gene_nos_seen_match = HashMap::<string_interner::symbol::SymbolU32, HashSet<u32>>::new();
-            let mut gene_nos_seen_reverse = HashMap::<string_interner::symbol::SymbolU32, HashSet<u32>>::new();
+            let mut gene_nos_seen_match =
+                HashMap::<string_interner::symbol::SymbolU32, Vec<std::ops::Range<u32>>>::new();
+            let mut gene_nos_seen_reverse =
+                HashMap::<string_interner::symbol::SymbolU32, Vec<std::ops::Range<u32>>>::new();
             let mut bases_aligned = 0u32;
             for iv in blocks.iter() {
                 bases_aligned += iv.1 - iv.0;
@@ -1606,12 +1608,8 @@ impl TreeMatcher {
                 for r in tree.find(iv.0..iv.1) {
                     let entry = r.data();
                     let found_interval = r.interval();
-                    let overlap_range = match self.count_strategy.overlap {
-                        crate::config::OverlapMode::Union => HashSet::new(),
-                        _ => {
-                            (iv.0.max(found_interval.start)..iv.1.min(found_interval.end)).collect()
-                        }
-                    };
+                    let intersected_interval =
+                        found_interval.start.max(iv.0)..found_interval.end.min(iv.1);
 
                     let gene_no = entry.0;
                     let region_strand = entry.1;
@@ -1644,51 +1642,28 @@ impl TreeMatcher {
                         (MatchDirection::Ignore, _, _) => &mut gene_nos_seen_match,
                     };
                     let gene_id = interner.get_or_intern(&gene_ids[gene_no as usize]);
-                    target
-                        .entry(gene_id)
-                        .and_modify(|e| e.extend(&overlap_range))
-                        .or_insert(overlap_range);
-                }
-            }
-
-            for gg in [&mut gene_nos_seen_match, &mut gene_nos_seen_reverse] {
-                match self.count_strategy.overlap {
-                    crate::config::OverlapMode::Union => {
-                        unreachable!();
-                        // do nothing, we keep them all
-                    }
-                    crate::config::OverlapMode::IntersectionStrict => {
-                        //only keep those that are fully contained in the region
-                        gg.retain(|_, v| v.len() == bases_aligned as usize);
-                    }
-                    crate::config::OverlapMode::IntersectionNonEmpty => {
-                        let any_fully_contained =
-                            gg.values().any(|v| v.len() == bases_aligned as usize);
-                        if any_fully_contained {
-                            // only keep those that are fully contained in the region
-                            gg.retain(|_, v| v.len() == bases_aligned as usize);
-                        } else {
-                            // multiple partial overlaps, keep all.
+                    match target.entry(gene_id) {
+                        std::collections::hash_map::Entry::Occupied(mut e) => {
+                            e.get_mut().push(intersected_interval);
+                        }
+                        std::collections::hash_map::Entry::Vacant(e) => {
+                            e.insert(vec![intersected_interval]);
                         }
                     }
                 }
-                match self.count_strategy.multi_region {
-                    crate::config::MultiRegionHandling::Drop => {
-                        if gg.len() > 1 {
-                            // if there are multiple genes, drop them
-                            gg.clear();
-                        }
-                    }
-                    crate::config::MultiRegionHandling::CountBoth => {
-                        //do nothing.
-                    }
-                }
             }
+            let gene_nos_seen_match = apply_count_strategy(
+                &self.count_strategy,
+                gene_nos_seen_match,
+                bases_aligned as usize,
+            );
+            let gene_nos_seen_reverse = apply_count_strategy(
+                &self.count_strategy,
+                gene_nos_seen_reverse,
+                bases_aligned as usize,
+            );
 
-            Ok((
-                gene_nos_seen_match.into_keys().collect(),
-                gene_nos_seen_reverse.into_keys().collect(),
-            ))
+            return Ok((gene_nos_seen_match, gene_nos_seen_reverse));
         }
     }
 }
@@ -1742,4 +1717,86 @@ impl TagMatcher {
         }
         Ok((genes_hit_correct, genes_hit_reverse))
     }
+}
+fn merged_interval_length(ivs: &mut Vec<std::ops::Range<u32>>) -> usize {
+    if ivs.is_empty() {
+        return 0;
+    }
+    ivs.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.end.cmp(&b.end)));
+    let mut current_start = ivs[0].start;
+    let mut current_end = ivs[0].end;
+    let mut total = 0;
+    for iv in ivs.iter().skip(1) {
+        if iv.start <= current_end {
+            // overlap, merge
+            current_end = current_end.max(iv.end);
+        } else {
+            // no overlap, push the current interval and start a new one
+            total += (current_end - current_start) as usize;
+            current_start = iv.start;
+            current_end = iv.end;
+        }
+    }
+    total += (current_end - current_start) as usize;
+    total
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_merged_interval_lengths() {
+        use super::merged_interval_length;
+        assert_eq!(merged_interval_length(&mut vec![]), 0);
+        assert_eq!(merged_interval_length(&mut vec![0..10, 10..20, 20..30]), 30);
+        assert_eq!(merged_interval_length(&mut vec![0..10, 5..15, 10..20]), 20);
+        assert_eq!(merged_interval_length(&mut vec![0..10, 5..15, 10..25]), 25);
+        assert_eq!(merged_interval_length(&mut vec![0..10, 20..55]), 45);
+        assert_eq!(
+            merged_interval_length(&mut vec![20..30, 45..50, 28..32]),
+            10 + 5 + 2
+        );
+    }
+}
+
+fn apply_count_strategy(
+    count_strategy: &crate::config::Strategy,
+    gene_nos: HashMap<string_interner::symbol::SymbolU32, Vec<std::ops::Range<u32>>>,
+    bases_aligned: usize,
+) -> Vec<string_interner::symbol::SymbolU32> {
+    //now merge the intervals, and convert them into length
+    let mut gg_len = gene_nos
+        .into_iter()
+        .map(|(k, mut v)| (k, merged_interval_length(&mut v)))
+        .collect::<HashMap<SymbolU32, usize>>();
+    match count_strategy.overlap {
+        crate::config::OverlapMode::Union => {
+            unreachable!();
+            // do nothing, we keep them all
+        }
+        crate::config::OverlapMode::IntersectionStrict => {
+            //only keep those that are fully contained in the region
+            gg_len.retain(|_, v| *v == bases_aligned as usize);
+        }
+        crate::config::OverlapMode::IntersectionNonEmpty => {
+            let any_fully_contained = gg_len.values().any(|v| *v == bases_aligned as usize);
+            if any_fully_contained {
+                // only keep those that are fully contained in the region
+                gg_len.retain(|_, v| *v == bases_aligned as usize);
+            } else {
+                // multiple partial overlaps, keep all.
+            }
+        }
+    }
+    match count_strategy.multi_region {
+        crate::config::MultiRegionHandling::Drop => {
+            if gg_len.len() > 1 {
+                // if there are multiple genes, drop them
+                gg_len.clear();
+            }
+        }
+        crate::config::MultiRegionHandling::CountBoth => {
+            //do nothing.
+        }
+    }
+    gg_len.into_keys().collect()
 }
