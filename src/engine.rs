@@ -894,7 +894,7 @@ impl Engine {
 
                         let mut idx_to_annotation_decision = output_bam_info
                             .as_ref()
-                            .map(|output_bam_info| HashMap::new());
+                            .map(|_| HashMap::new());
 
                         let max_skip_len = correct_reads_for_clipping
                             .then(|| max_skip_len)
@@ -1032,24 +1032,7 @@ impl Engine {
         output_cacher: &mut CounterPerChunk,
         mut idx_to_annotated: Option<&mut HashMap<usize, AnnotatedRead>>,
     ) -> Result<()> {
-        for mut block in [read_block.reads_forward, read_block.reads_reverse] {
-            /* block.sort_by(|a, b| match (&a.0, &b.0) {
-                (AnnotatedRead::Counted(info_a), AnnotatedRead::Counted(info_b)) => {
-                    info_a.barcode.as_ref().cmp(&info_b.barcode.as_ref())
-                }
-                (AnnotatedRead::Counted(_), _) => std::cmp::Ordering::Less,
-                (_, AnnotatedRead::Counted(_)) => std::cmp::Ordering::Greater,
-                _ => std::cmp::Ordering::Equal,
-            });
-
-            if let Some(last_index_not_filtered) = block.iter().rposition(|(read, _)| match read {
-                AnnotatedRead::Counted(_) => true,
-                _ => false,
-            }) {
-                /* self.dedup_strategy
-                .dedup(&mut block[0..=last_index_not_filtered])
-                .context("weighting failed")?; */
-            } // none -> all reads filtered, no dedup necessary */
+        for block in [read_block.reads_forward, read_block.reads_reverse] {
             output_cacher
                 .count_reads(&block)
                 .context("Failed to count reads in read block")?;

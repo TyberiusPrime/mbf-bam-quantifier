@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use rust_htslib::bam;
 
-use crate::{bam_ext::BamRecordExtensions, config::Config, engine};
+use crate::{bam_ext::BamRecordExtensions, config::Config};
 use serde::{Deserialize, Serialize};
 
 mod basic;
@@ -16,9 +15,6 @@ pub trait Dedup: Send + Sync + Clone {
     fn check(&self, _config: &Config) -> anyhow::Result<()> {
         Ok(())
     }
-
-    fn dedup(&self, annotated_reads: &mut [(engine::AnnotatedRead, usize)]) -> Result<()>;
-
     fn new_per_position(&self) -> DedupPerPosition {
         DedupPerPosition::None
     }
@@ -48,7 +44,7 @@ enum Direction {
 }
 
 #[derive(PartialOrd, PartialEq, Eq)]
-struct MappingQuality {
+pub struct MappingQuality {
     no_of_alignments: u8,
     mapq: u8,
     //consider deciding on cigar length as well?
@@ -134,7 +130,7 @@ impl DedupPerPosition {
                             AcceptReadResult::Duplicated
                         }
                     }
-                    None => 
+                    None => {
                         map.insert((umi.to_vec(), barcode.to_vec()), (this_index, this_mq));
                         return AcceptReadResult::New;
                     }

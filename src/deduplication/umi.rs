@@ -1,7 +1,7 @@
 use crate::engine::AnnotatedRead;
 
 use super::Dedup;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::collections::HashMap;
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -73,10 +73,12 @@ impl UMIGrouping {
     }
 }
 impl Dedup for UMI {
-    fn dedup(&self, annotated_reads: &mut [(crate::engine::AnnotatedRead, usize)]) -> Result<()> {
-        self.umi_grouping.weight_read_group(annotated_reads)
+    fn check(&self, config: &crate::config::Config) -> anyhow::Result<()> {
+        if config.umi.is_none() {
+            bail!("UMI deduplication quantification requires UMI extraction to be defined in the configuration.");
+        }
+        Ok(())
     }
-
 
     fn new_per_position(&self) -> super::DedupPerPosition {
         super::DedupPerPosition::UMI(HashMap::new())
