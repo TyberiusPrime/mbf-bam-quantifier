@@ -38,7 +38,7 @@ impl BamRecordExtensions for bam::Record {
             if skip > max_skip_len.into() {
                 panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?")
             }
-            Some(p.saturating_sub(skip) as i64)
+            Some(p.saturating_sub(skip))
         }
     }
     /// try to retrieve the number of mapping coordinates

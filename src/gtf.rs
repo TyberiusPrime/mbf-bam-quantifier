@@ -186,14 +186,14 @@ pub fn parse_minimal(
             .filter(|x| !x.is_empty());
         let mut tags = Vec::new();
         let split_char = match gff_or_gtf {
-            GTFFormat::GTF => ' ',
-            GTFFormat::GFF => '=',
+            GTFFormat::Gtf => ' ',
+            GTFFormat::Gff => '=',
             GTFFormat::AutoDetect => {
                 if attributes_str.contains('=') {
-                    gff_or_gtf = GTFFormat::GFF;
+                    gff_or_gtf = GTFFormat::Gff;
                     '='
                 } else {
-                    gff_or_gtf = GTFFormat::GTF;
+                    gff_or_gtf = GTFFormat::Gtf;
                     ' '
                 }
             }

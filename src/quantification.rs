@@ -18,7 +18,7 @@ pub fn quantify(
     //
 
     let our_engine = match input.source {
-        crate::config::Source::GTF(ref gtf_config) => {
+        crate::config::Source::Gtf(ref gtf_config) => {
             let aggr_id_attribute = gtf_config
                 .aggr_id_attribute
                 .as_ref()

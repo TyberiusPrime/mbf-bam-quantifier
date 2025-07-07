@@ -54,7 +54,7 @@ pub struct Input {
 #[serde(tag = "mode")]
 pub enum Source {
     #[serde(alias = "gtf")]
-    GTF(GTFConfig),
+    Gtf(GTFConfig),
     #[serde(alias = "bam_references")]
     BamReferences,
     #[serde(alias = "bam_tag")]
@@ -160,8 +160,8 @@ pub struct Strategy {
 #[serde(deny_unknown_fields)]
 pub enum GTFFormat {
     AutoDetect,
-    GFF,
-    GTF
+    Gff,
+    Gtf
 }
 
 impl Default for GTFFormat {
@@ -214,7 +214,7 @@ impl Input {
         collapse_or_rename_duplicates: crate::config::DuplicateHandling,
         duplication_detection_id_attribute: &str,
     ) -> Result<HashMap<String, crate::gtf::GTFEntrys>> {
-        if let Source::GTF(gtf_config) = &self.source {
+        if let Source::Gtf(gtf_config) = &self.source {
             let accepted_features = vec![&gtf_config.feature];
             let accepted_tags: HashSet<String> = vec![
                 gtf_config.id_attribute.to_string(),
