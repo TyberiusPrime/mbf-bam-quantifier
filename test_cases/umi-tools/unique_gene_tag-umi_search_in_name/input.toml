@@ -1,0 +1,26 @@
+[input]
+	bam = "input_chr19_gene_tags.bam"
+	source.mode = "bam_tag"
+    source.tag = 'XF'
+
+
+[umi]
+    mode = "search_in_name"
+    search = "UMI_"
+    skip = 0
+    len = 6
+
+[strategy]
+	direction = 'ignore'
+
+[dedup]
+	mode = "umi"
+	umi_grouping = "unique"
+
+
+[output]
+	directory = 'output'
+	write_annotated_bam  = true
+
+
+

@@ -21,4 +21,4 @@ Session.vim
 tests/failures
 **/actual/**
 *bam.temp
-**/ignore_prep/
+**/ignore_*

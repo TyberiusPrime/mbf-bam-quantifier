@@ -28,6 +28,9 @@ pub enum UMIExtraction {
     #[serde(alias = "regex_name")]
     RegexName(RegexName),
 
+    #[serde(alias = "search_in_name")]
+    SearchInName(SearchInName),
+
     #[serde(alias = "read_region")]
     ReadRegion(ReadRegion),
     #[serde(alias = "Tag")]
@@ -100,6 +103,35 @@ impl UMIExtractor for Tag {
         match tag {
             rust_htslib::bam::record::Aux::String(v) => Ok(Some(v.as_bytes().to_vec())),
             _ => bail!("Expected tag to be a string, found {:?}", tag),
+        }
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SearchInName {
+    #[serde(deserialize_with = "crate::config::u8_from_string")]
+    search: Vec<u8>,
+    skip: usize,
+    len: usize,
+}
+
+impl UMIExtractor for SearchInName {
+    fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
+        let name = read.qname();
+        //where is search in name?
+        let offset = twoway::find_bytes(name, &self.search);
+        match offset {
+            Some(offset) => {
+                let start = offset + self.search.len() + self.skip;
+                let stop = start + self.len;
+                if stop > name.len() {
+                    Ok(None)
+                } else {
+                    Ok(Some(name[start..stop].to_vec()))
+                }
+            }
+            None => Ok(None),
         }
     }
 }

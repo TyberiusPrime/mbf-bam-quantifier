@@ -320,3 +320,15 @@ impl Input {
         }
     } */
 }
+
+
+
+pub fn u8_from_string<'de, D>(deserializer: D) -> core::result::Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    Ok(s.as_bytes().to_vec())
+}
+
+
