@@ -39,37 +39,42 @@
         nativeBuildInputs = with pkgs; [
           pkg-config
           clang
+          perl
+          cmake
         ];
-        buildInputs = with pkgs; [openssl cmake];
+        buildInputs = with pkgs; [openssl];
         release = true;
         CARGO_PROFILE_RELEASE_debug = "0";
+
+        LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
       };
-      packages.mbf-bam-quantifier_other_linux =
-        (naersk-lib.buildPackage {
-          pname = "mbf-bam-quantifier";
-          root = ./.;
-          nativeBuildInputs = with pkgs; [pkg-config clang];
-          buildInputs = with pkgs; [openssl cmake];
-          release = true;
-          CARGO_PROFILE_RELEASE_debug = "0";
-        })
-        .overrideAttrs {
-          # make it compatible with other linuxes. It's statically linked anyway
-          postInstall = ''
-            patchelf $out/bin/mbf-bam-quantifier --set-interpreter "/lib64/ld-linux-x86-64.so.2"
-          '';
-        };
+      packages.mbf-bam-quantifier_other_linux = pkgs.stdenv.mkDerivation rec {
+        pname = "mbf-bam-quantifier-other-linux";
+        inherit (packages.mbf-bam-quantifier) version;
+        src = packages.mbf-bam-quantifier;
+        unpackPhase = ":";
+        buildPhase = ":";
+        # make it compatible with other linuxes. It's statically linked anyway
+        installPhase = ''
+          mkdir -p $out/bin
+          cp $src/bin/mbf-bam-quantifier $out/bin/mbf-bam-quantifier
+          chmod +w $out/bin/mbf-bam-quantifier
+          patchelf $out/bin/mbf-bam-quantifier --set-interpreter "/lib64/ld-linux-x86-64.so.2"
+        '';
+      };
       packages.check = naersk-lib.buildPackage {
         src = ./.;
         mode = "check";
-        nativeBuildInputs = with pkgs; [pkg-config zstd.bin];
-        buildInputs = with pkgs; [openssl cmake zstd.dev];
+        nativeBuildInputs = with pkgs; [pkg-config cmake clang perl];
+        buildInputs = with pkgs; [openssl];
+
+        LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
       };
       packages.test = naersk-lib.buildPackage {
         src = ./.;
-        buildInputs = with pkgs; [openssl cmake];
+        buildInputs = with pkgs; [openssl];
         mode = "test";
-        nativeBuildInputs = with pkgs; [pkg-config cargo-nextest clang];
+        nativeBuildInputs = with pkgs; [pkg-config cargo-nextest clang perl cmake];
         cargoTestCommands = old: ["cargo nextest run $cargo_test_options --no-fail-fast"];
         override = {
           buildPhase = ":";
@@ -86,9 +91,12 @@
                  echo "Error: 'this is embarrasing' found in stderr"
                  exit 1
              fi
+             ./dev/run_testcases.sh test_cases
           '';
         };
         doCheck = true;
+        CARGO_PROFILE_RELEASE_debug = "0";
+        LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
       };
       # haven't been able to get this to work
       # packages.coverage = naersk-lib.buildPackage {

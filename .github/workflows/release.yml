@@ -1,7 +1,7 @@
 name: Release Workflow
 env:
   # The project name specified in your Cargo.toml
-  PROJECT_NAME: mbf_fastq_processor
+  PROJECT_NAME: mbf-bam-quantifier
 
 on:
   push:
@@ -38,13 +38,13 @@ jobs:
         run: nix build .#test
 
       - name: Build
-        run: nix build .#mbf-fastq-processor_other_linux
+        run: nix build .#mbf-bam-quanifier_other_linux
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ./result/bin/mbf_fastq_processor
+            ./result/bin/mbf-bam-quantifier
 
 
   build_windows:

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs::{self, DirEntry};
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
@@ -69,7 +69,6 @@ fn run_tests(test_dir: impl AsRef<Path>, continue_upon_failure: bool) -> Result<
             continue;
         }
 
-
         let repeat_count = fs::read_to_string(test_case.dir.join("repeat"))
             .map(|x| {
                 x.trim()
@@ -79,11 +78,12 @@ fn run_tests(test_dir: impl AsRef<Path>, continue_upon_failure: bool) -> Result<
             .unwrap_or(1);
 
         for repeat in 0..repeat_count {
-            print!("\n  Running test: {} {}", test_case.dir.display(), repeat);
             let start = std::time::Instant::now();
             let test_result = if test_case.is_panic {
+                print!("\n  Running panic test: {} {}", test_case.dir.display(), repeat);
                 run_panic_test(&test_case, processor_path.as_ref())
             } else {
+                print!("\n  Running regular test: {} {}", test_case.dir.display(), repeat);
                 run_output_test(&test_case, processor_path.as_ref())
             };
             let elapsed = start.elapsed();
@@ -390,8 +390,9 @@ fn perform_test(test_case: &TestCase, processor_cmd: &Path) -> Result<TestOutput
         relative_path.starts_with("input")
     })?;
     let expected_files = scan_dir(test_case.dir.as_path(), |relative_path, filename| {
-        !filename.starts_with("input") && !filename.starts_with("ignore_")
-        && !relative_path.starts_with("ignore_")
+        !filename.starts_with("input")
+            && !filename.starts_with("ignore_")
+            && !relative_path.starts_with("ignore_")
     })?;
 
     let temp_dir = setup_test_environment(input_files).context("Setup test dir")?;
@@ -554,7 +555,7 @@ fn files_equal(file_a: PathBuf, file_b: PathBuf) -> Result<bool> {
                 stdout.trim(),
                 stderr.trim()
             );
-            return Ok(false)
+            return Ok(false);
         }
     }
     Ok(false)
