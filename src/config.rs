@@ -10,7 +10,7 @@ use serde_valid::Validate;
 
 use crate::{
     barcodes::CellBarcodes,
-    deduplication::{Dedup, DeduplicationStrategy},
+    deduplication::{DeduplicationStrategy},
     extractors::UMIExtraction,
 };
 
@@ -176,7 +176,7 @@ pub struct Output {
 
 impl Config {
     pub fn check(&self) -> Result<()> {
-        self.dedup.mode.check(self)?;
+        self.dedup.check(self)?;
         Ok(())
     }
 

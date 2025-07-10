@@ -8,7 +8,7 @@ use string_interner::StringInterner;
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
-use crate::deduplication::{AcceptReadResult, Dedup, DeduplicationStrategy};
+use crate::deduplication::{AcceptReadResult, DeduplicationStrategy};
 use crate::extractors::UMIExtractor;
 use crate::filters::ReadFilter;
 use crate::gtf::Strand;
@@ -682,6 +682,12 @@ struct OutputBamInfo {
     header: rust_htslib::bam::Header,
 }
 
+#[derive(Debug, Copy, Clone)]
+enum Bucket {
+    PerPosition,
+    PerReference(i32),
+}
+
 pub struct Engine {
     dedup_strategy: DeduplicationStrategy,
     filters: Vec<crate::filters::Filter>,
@@ -916,6 +922,15 @@ impl Engine {
                         let mut orig_index = 0;
                         let mut debug_processed_ids: HashSet<i32> = HashSet::new();
 
+                        let bucket_mode = match self.dedup_strategy.bucket {
+                            crate::deduplication::DeduplicationBucket::PerPosition => {
+                                Bucket::PerPosition
+                            }
+                            crate::deduplication::DeduplicationBucket::PerReference => {
+                                Bucket::PerReference((chunk.stop + max_skip_len) as i32)
+                            }
+                        };
+
                         while let Some(next_pos) = self.read_until_next_pos(
                             &mut bam,
                             &mut read,
@@ -925,6 +940,7 @@ impl Engine {
                             &mut interner,
                             current_pos,
                             &mut read_catcher,
+                            bucket_mode,
                         )? {
                             let remaining_positions =
                                 read_catcher.split_off(&(current_pos - max_skip_len as i32));
@@ -1106,6 +1122,7 @@ impl Engine {
         interner: &mut OurInterner,
         current_pos: i32,
         read_catcher: &mut BTreeMap<i32, PerPosition>,
+        bucket_mode: Bucket,
     ) -> Result<Option<i32>> {
         let mut last_read_pos: Option<i32> = None;
         'outer: loop {
@@ -1124,11 +1141,20 @@ impl Engine {
                 None => return Ok(None),
             };
 
-            let corrected_position = if max_skip_len > 0 {
-                read.corrected_pos(max_skip_len)
-            } else {
-                Some(read.pos() as i32) //this is safe. it's an aligned read, must be <2^31
+            let (corrected_position, position_for_bounds_check) = match bucket_mode {
+                Bucket::PerPosition => {
+                    if max_skip_len > 0 {
+                        let rp = read
+                            .corrected_pos(max_skip_len)
+                            .expect("unaligned read found?");
+                        (rp, rp)
+                    } else {
+                        (read.pos() as i32, read.pos() as i32) //this is safe. it's an aligned read, must be <2^31
+                    }
+                }
+                Bucket::PerReference(l) => (l, read.pos() as i32),
             };
+
             last_read_pos = Some(
                 read.pos()
                     .try_into()
@@ -1136,149 +1162,141 @@ impl Engine {
             ); //we read based on stored read position. Once that's
                //reached x+max_skip len the outer frame can process those up to x...
 
-            if let Some(corrected_position) = corrected_position {
-                let output =
-                    read_catcher
-                        .entry(corrected_position)
-                        .or_insert_with(|| PerPosition {
-                            reads_forward: Vec::new(),
-                            reads_reverse: Vec::new(),
-                            dedup_storage: self.dedup_strategy.new_bucket(),
-                        });
-                let res = if read.is_reverse() {
-                    &mut output.reads_reverse
-                } else {
-                    &mut output.reads_forward
-                };
-                if (chunk.start > 0 && corrected_position < chunk.start as i32)
+            let output = read_catcher
+                .entry(corrected_position)
+                .or_insert_with(|| PerPosition {
+                    reads_forward: Vec::new(),
+                    reads_reverse: Vec::new(),
+                    dedup_storage: self.dedup_strategy.new_bucket(),
+                });
+            let res = if read.is_reverse() {
+                &mut output.reads_reverse
+            } else {
+                &mut output.reads_forward
+            };
+            if (chunk.start > 0 && position_for_bounds_check < chunk.start as i32)
                     //reads in the first chunk, that would've started to the left are
                     //also accepted
-                 || (corrected_position >= chunk.stop as i32)
-                {
-                    //this ensures we count a read only in the chunk where it's left most
-                    //pos is in.
-                    dbg!(
-                        "not in region",
-                        std::str::from_utf8(read.qname()).unwrap(),
-                        corrected_position,
-                        chunk
-                    );
-                    res.push((AnnotatedRead::NotInRegion, *org_index));
+                 || (position_for_bounds_check >= chunk.stop as i32)
+            {
+                //this ensures we count a read only in the chunk where it's left most
+                //pos is in.
+                dbg!(
+                    "not in region",
+                    std::str::from_utf8(read.qname()).unwrap(),
+                    corrected_position,
+                    chunk
+                );
+                res.push((AnnotatedRead::NotInRegion, *org_index));
+                *org_index += 1;
+                continue;
+            }
+
+            for f in self.filters.iter() {
+                if f.remove_read(read) {
+                    // if the read does not pass the filter, skip it
+                    res.push((AnnotatedRead::Filtered, *org_index));
                     *org_index += 1;
-                    continue;
+                    continue 'outer;
                 }
+            }
 
-                for f in self.filters.iter() {
-                    if f.remove_read(read) {
-                        // if the read does not pass the filter, skip it
-                        res.push((AnnotatedRead::Filtered, *org_index));
-                        *org_index += 1;
-                        continue 'outer;
-                    }
-                }
-
-                let barcode = {
-                    match self.cell_barcode.as_ref() {
-                        Some(cb) => {
-                            let bc = cb.extract(read).context("barcode extraction failed")?; // an error
-                            match bc {
-                                Some(uncorrected) => {
-                                    // if we have a barcode, correct it
-                                    let corrected_barcode = cb.correct(&uncorrected);
-                                    match corrected_barcode {
-                                        Some(bc) => Some(bc),
-                                        None => {
-                                            res.push((
-                                                AnnotatedRead::BarcodeNotInWhitelist(
-                                                    uncorrected.clone(),
-                                                ),
-                                                *org_index,
-                                            ));
-                                            *org_index += 1;
-                                            continue;
-                                        }
+            let barcode = {
+                match self.cell_barcode.as_ref() {
+                    Some(cb) => {
+                        let bc = cb.extract(read).context("barcode extraction failed")?; // an error
+                        match bc {
+                            Some(uncorrected) => {
+                                // if we have a barcode, correct it
+                                let corrected_barcode = cb.correct(&uncorrected);
+                                match corrected_barcode {
+                                    Some(bc) => Some(bc),
+                                    None => {
+                                        res.push((
+                                            AnnotatedRead::BarcodeNotInWhitelist(
+                                                uncorrected.clone(),
+                                            ),
+                                            *org_index,
+                                        ));
+                                        *org_index += 1;
+                                        continue;
                                     }
                                 }
-                                None => {
-                                    res.push((AnnotatedRead::NoBarcode, *org_index));
-                                    *org_index += 1;
-                                    continue;
-                                }
                             }
-                        }
-                        None => None,
-                    }
-                };
-                let umi: Option<Vec<u8>> = {
-                    match self.umi_extractor.as_ref() {
-                        Some(x) => match x.extract(read)? {
-                            Some(umi) => Some(umi),
                             None => {
-                                res.push((AnnotatedRead::NoUMI, *org_index));
+                                res.push((AnnotatedRead::NoBarcode, *org_index));
                                 *org_index += 1;
                                 continue;
                             }
-                        },
-                        None => None,
+                        }
                     }
-                };
-                let (genes_hit_correct, genes_hit_reverse) =
-                    self.matcher.hits(chunk, read, interner)?;
-
-                let do_accept: AcceptReadResult = output.dedup_storage.accept_read(
-                    read,
-                    res.len(),
-                    umi.as_ref(),
-                    barcode.as_ref(),
-                );
-                match do_accept {
-                    AcceptReadResult::Duplicated => {
-                        res.push((AnnotatedRead::Duplicate, *org_index));
-                        *org_index += 1;
-                    }
-                    AcceptReadResult::New => {
-                        let info = AnnotatedReadInfo {
-                            corrected_position: corrected_position,
-                            reverse: read.is_reverse(),
-                            hits: Hits {
-                                correct: genes_hit_correct.into_iter().collect(),
-                                reverse: genes_hit_reverse.into_iter().collect(),
-                            },
-                            umi,
-                            barcode,
-                            mapping_priority: (
-                                read.no_of_alignments().try_into().unwrap_or(255),
-                                read.mapq(),
-                            ),
-                        };
-                        res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
-                        *org_index += 1;
-                    }
-                    AcceptReadResult::DuplicateButPrefered(idx_to_set_duplicate) => {
-                        let (_old, old_org_index) = &res[idx_to_set_duplicate];
-                        res[idx_to_set_duplicate] = (AnnotatedRead::Duplicate, *old_org_index);
-
-                        let info = AnnotatedReadInfo {
-                            corrected_position: corrected_position,
-                            reverse: read.is_reverse(),
-                            hits: Hits {
-                                correct: genes_hit_correct,
-                                reverse: genes_hit_reverse,
-                            },
-                            umi,
-                            barcode,
-                            mapping_priority: (
-                                read.no_of_alignments().try_into().unwrap_or(255),
-                                read.mapq(),
-                            ),
-                        };
-                        res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
-                        *org_index += 1;
-                    }
+                    None => None,
                 }
-            } else {
-                panic!("Did not expect to see an unaligned read in a chunk: {:?}, pos: {}, cigar: {} - corrected to {:?}", 
-                    std::str::from_utf8(read.qname()).unwrap_or("not-uf8"), read.pos(), read.cigar(), read.corrected_pos(max_skip_len));
+            };
+            let umi: Option<Vec<u8>> = {
+                match self.umi_extractor.as_ref() {
+                    Some(x) => match x.extract(read)? {
+                        Some(umi) => Some(umi),
+                        None => {
+                            res.push((AnnotatedRead::NoUMI, *org_index));
+                            *org_index += 1;
+                            continue;
+                        }
+                    },
+                    None => None,
+                }
+            };
+            let (genes_hit_correct, genes_hit_reverse) =
+                self.matcher.hits(chunk, read, interner)?;
+
+            let do_accept: AcceptReadResult =
+                output
+                    .dedup_storage
+                    .accept_read(read, res.len(), umi.as_ref(), barcode.as_ref());
+            match do_accept {
+                AcceptReadResult::Duplicated => {
+                    res.push((AnnotatedRead::Duplicate, *org_index));
+                    *org_index += 1;
+                }
+                AcceptReadResult::New => {
+                    let info = AnnotatedReadInfo {
+                        corrected_position: corrected_position,
+                        reverse: read.is_reverse(),
+                        hits: Hits {
+                            correct: genes_hit_correct.into_iter().collect(),
+                            reverse: genes_hit_reverse.into_iter().collect(),
+                        },
+                        umi,
+                        barcode,
+                        mapping_priority: (
+                            read.no_of_alignments().try_into().unwrap_or(255),
+                            read.mapq(),
+                        ),
+                    };
+                    res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
+                    *org_index += 1;
+                }
+                AcceptReadResult::DuplicateButPrefered(idx_to_set_duplicate) => {
+                    let (_old, old_org_index) = &res[idx_to_set_duplicate];
+                    res[idx_to_set_duplicate] = (AnnotatedRead::Duplicate, *old_org_index);
+
+                    let info = AnnotatedReadInfo {
+                        corrected_position: corrected_position,
+                        reverse: read.is_reverse(),
+                        hits: Hits {
+                            correct: genes_hit_correct,
+                            reverse: genes_hit_reverse,
+                        },
+                        umi,
+                        barcode,
+                        mapping_priority: (
+                            read.no_of_alignments().try_into().unwrap_or(255),
+                            read.mapq(),
+                        ),
+                    };
+                    res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
+                    *org_index += 1;
+                }
             }
         }
     }

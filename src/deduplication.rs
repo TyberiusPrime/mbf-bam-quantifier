@@ -1,21 +1,9 @@
 use std::collections::HashMap;
 
-use enum_dispatch::enum_dispatch;
+use anyhow::bail;
 use rust_htslib::bam;
 
 use crate::{bam_ext::BamRecordExtensions, config::Config};
-use serde::{Deserialize, Serialize};
-
-mod basic;
-mod singlecells;
-mod umi;
-
-#[enum_dispatch(DeduplicationMode)]
-pub trait Dedup: Send + Sync + Clone {
-    fn check(&self, _config: &Config) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct DeduplicationStrategy {
@@ -27,13 +15,32 @@ pub struct DeduplicationStrategy {
 }
 
 impl DeduplicationStrategy {
-
     pub fn new_bucket(&self) -> DedupPerBucket {
         match &self.mode {
-            DeduplicationMode::NoDedup(_) => DedupPerBucket::None,
-            DeduplicationMode::Umi(_) => DedupPerBucket::Umi(HashMap::new()),
-            DeduplicationMode::SingleCell(_) => DedupPerBucket::SingleCell(HashMap::new()),
+            DeduplicationMode::NoDedup => DedupPerBucket::None,
+            DeduplicationMode::Umi => DedupPerBucket::Umi(HashMap::new()),
+            DeduplicationMode::SingleCell => DedupPerBucket::SingleCell(HashMap::new()),
         }
+    }
+
+    pub fn check(&self, config: &Config) -> anyhow::Result<()> {
+        match self.mode {
+            DeduplicationMode::NoDedup => {},
+            DeduplicationMode::Umi => {
+                if config.umi.is_none() {
+                    bail!("UMI deduplication quantification requires UMI extraction to be defined in the configuration.");
+                }
+            }
+            DeduplicationMode::SingleCell => {
+                if config.cell_barcodes.is_none() {
+                    bail!("SingleCell quantification requires cell barcodes to be defined in the configuration.");
+                }
+                if config.umi.is_none() {
+                    bail!("SingleCell quantification requires UMI extraction to be defined in the configuration.");
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -45,19 +52,18 @@ pub enum DeduplicationBucket {
 }
 
 #[derive(serde::Deserialize, Debug, Clone, strum_macros::Display)]
-#[enum_dispatch]
 //have it read the mode field
 #[serde(tag = "mode")]
 pub enum DeduplicationMode {
     #[serde(alias = "none")]
-    NoDedup(basic::Basic), //todo: rename basic:basic
+    NoDedup,
 
     #[serde(alias = "umi")]
-    Umi(umi::Umi),
+    Umi,
 
     #[serde(alias = "singlecell")]
     #[serde(alias = "sc")]
-    SingleCell(singlecells::SingleCell),
+    SingleCell,
 }
 
 #[derive(PartialEq, Eq)]
