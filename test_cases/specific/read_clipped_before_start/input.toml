@@ -1,0 +1,28 @@
+[input]
+    bam = "input.bam"
+	correct_reads_for_clipping = true #
+
+[input.source]
+   mode ="bam_references"
+
+[cell_barcodes]
+	extract = {mode = "Tag", tag = 'CB'}
+    separator_char = '_'
+	max_hamming = 0
+
+[umi]
+	mode = 'Tag'
+	tag = 'UB'
+
+[strategy]
+	multi_region = 'count_both'
+	overlap ='intersection_strict'
+	direction = 'Forward'
+
+[dedup]
+   mode = "sc"
+   umi_grouping = 'unique'
+
+[output]
+    directory = 'output'
+    write_annotated_bam = true

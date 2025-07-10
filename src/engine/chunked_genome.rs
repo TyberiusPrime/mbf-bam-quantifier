@@ -96,6 +96,8 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(chr: String, tid: u32, start: u32, stop: u32) -> Chunk {
+        assert!(start < i32::MAX as u32);
+        assert!(stop < i32::MAX as u32);
         Chunk {
             chr,
             tid,

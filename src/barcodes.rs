@@ -50,7 +50,7 @@ pub struct CellBarcodes {
     separator_char: u8,
     #[serde(default)]
     max_hamming: u16,
-    #[validate(min_length = 1)]
+    #[serde(default)]
     whitelist_files: Vec<PathBuf>,
 
     #[serde(skip)]
@@ -80,6 +80,9 @@ impl CellBarcodes {
 
     pub fn correct(&self, barcode: &[u8]) -> Option<Vec<u8>> {
         // possibly microopt: use cow...
+        if self.whitelists.is_empty() {
+            return Some(barcode.to_vec());
+        }
         let parts = barcode.split(|&b| b == self.separator_char);
         let mut out = Vec::new();
         for (part, whitelist) in parts.zip(self.whitelists.iter()) {

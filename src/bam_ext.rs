@@ -9,7 +9,7 @@ pub trait BamRecordExtensions {
     fn introns(&self) -> Vec<(u32, u32)>;
 
     ///return None on unaligned reads (pos = -1...)
-    fn corrected_pos(&self, max_skip_len: u32) -> Option<i64>;
+    fn corrected_pos(&self, max_skip_len: u32) -> Option<i32>;
 
     fn no_of_alignments(&self) -> u32;
     fn replace_aux(&mut self, tag: &[u8], value: bam::record::Aux) -> Result<()>;
@@ -27,15 +27,20 @@ impl BamRecordExtensions for bam::Record {
             .map(|x| (x[0] as u32, x[1] as u32))
             .collect()
     }
-    fn corrected_pos(&self, max_skip_len: u32) -> Option<i64> {
-        let p = self.pos();
+
+    /// correct the position to what it would have if there was on clipping
+    /// ie. if they were treated as mismatches
+    /// i32 is ok, sam raneg is 0..2^31-1, and we can have negative corrected positions
+    /// if it's aligned to the start
+    fn corrected_pos(&self, max_skip_len: u32) -> Option<i32> {
+        let p:i32 = self.pos().try_into().expect("bam pos exceeded i32?");
         if p < 0 {
             None
         } else {
             //it's always the leading ones... since the seq gets flipped
 
-            let skip = self.cigar().leading_softclips();
-            if skip > max_skip_len.into() {
+            let skip: i32 = self.cigar().leading_softclips().try_into().expect("softclip exceeded i64");
+            if skip > max_skip_len.try_into().unwrap(){
                 panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?")
             }
             Some(p.saturating_sub(skip))

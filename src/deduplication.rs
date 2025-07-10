@@ -122,6 +122,12 @@ impl DedupPerPosition {
                     .expect("Barcode should be extracted before deduplication")
                     .as_slice();
 
+                /* println!("read {:?} pos {}, umi {}, barcode {}", 
+                    std::str::from_utf8(read.qname()),
+                    read.pos(),
+                    std::str::from_utf8(umi).unwrap_or("invalid UMI"),
+                    std::str::from_utf8(barcode).unwrap_or("invalid barcode"));
+ */
                 let this_mq = MappingQuality {
                     no_of_alignments: read.no_of_alignments().try_into().unwrap_or(255),
                     mapq: read.mapq(),

@@ -144,7 +144,8 @@ pub struct Hits {
 
 #[derive(Debug)]
 pub struct AnnotatedReadInfo {
-    pub corrected_position: u32, // clipping corrected position 4 bytes
+    pub corrected_position: i32, // clipping corrected position. Samspec is limited to 0..2^31-1,
+    // so i32 is safe, and it allows us to have negative corrected positions
     pub hits: Hits,
     pub umi: Option<Vec<u8>>,     // Optional: What's it's UMI. 24 bytes
     pub barcode: Option<Vec<u8>>, // Optional: What's it's cell-barcode 24 bytes
@@ -175,12 +176,8 @@ impl ReadToGeneMatcher {
         Vec<string_interner::symbol::SymbolU32>,
     )> {
         match self {
-            ReadToGeneMatcher::TreeMatcher(matcher) => {
-                matcher.hits(chunk, read, interner)
-            }
-            ReadToGeneMatcher::TagMatcher(matcher) => {
-                matcher.hits(chunk, read, interner)
-            }
+            ReadToGeneMatcher::TreeMatcher(matcher) => matcher.hits(chunk, read, interner),
+            ReadToGeneMatcher::TagMatcher(matcher) => matcher.hits(chunk, read, interner),
         }
     }
 }
@@ -876,6 +873,13 @@ impl Engine {
         let chunk_names = chunks.iter().map(|c| c.str_id()).collect::<Vec<_>>();
 
         let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
+
+        let max_skip_len = if correct_reads_for_clipping {
+            assert!(max_skip_len < i32::MAX as u32);
+            max_skip_len
+        } else {
+            0u32
+        };
         let aggregated = pool.install(|| {
             let result: Vec<Result<()>> = chunks
                 .into_par_iter()
@@ -887,7 +891,7 @@ impl Engine {
                         // over and over,
                         // so interning the strings is a good memory saving measure.
                         let mut interner = StringInterner::default();
-                        let mut read_catcher: BTreeMap<i64, PerPosition> = BTreeMap::new();
+                        let mut read_catcher: BTreeMap<i32, PerPosition> = BTreeMap::new();
                         let mut output_catcher = self
                             .output
                             .lock()
@@ -897,12 +901,7 @@ impl Engine {
                         let mut idx_to_annotation_decision =
                             output_bam_info.as_ref().map(|_| HashMap::new());
 
-                        let max_skip_len = if correct_reads_for_clipping {
-                            max_skip_len
-                        } else {
-                            0
-                        };
-                        let mut current_pos = 0u32;
+                        let mut current_pos = 0i32;
 
                         bam.fetch((
                             chunk.tid,
@@ -915,7 +914,7 @@ impl Engine {
                         ))?;
                         let mut read = bam::Record::new();
                         let mut orig_index = 0;
-                        let mut debug_processed_ids: HashSet<i64> = HashSet::new();
+                        let mut debug_processed_ids: HashSet<i32> = HashSet::new();
 
                         while let Some(next_pos) = self.read_until_next_pos(
                             &mut bam,
@@ -928,7 +927,7 @@ impl Engine {
                             &mut read_catcher,
                         )? {
                             let remaining_positions =
-                                read_catcher.split_off(&(current_pos as i64 - max_skip_len as i64));
+                                read_catcher.split_off(&(current_pos - max_skip_len as i32));
                             let done_positions = read_catcher;
                             read_catcher = remaining_positions;
                             for (done_pos, block) in done_positions.into_iter() {
@@ -951,13 +950,13 @@ impl Engine {
                             }
                             for read in &block.reads_forward {
                                 if let AnnotatedRead::Counted(info) = &read.0 {
-                                    assert_eq!(info.corrected_position as i64, done_pos);
+                                    assert_eq!(info.corrected_position, done_pos);
                                 }
                             }
 
                             for read in &block.reads_reverse {
                                 if let AnnotatedRead::Counted(info) = &read.0 {
-                                    assert_eq!(info.corrected_position as i64, done_pos);
+                                    assert_eq!(info.corrected_position, done_pos);
                                 }
                             }
 
@@ -1102,13 +1101,13 @@ impl Engine {
         bam: &mut rust_htslib::bam::IndexedReader,
         read: &mut bam::Record,
         org_index: &mut usize,
-        chunk:&Chunk,
+        chunk: &Chunk,
         max_skip_len: u32,
         interner: &mut OurInterner,
-        current_pos: u32,
-        read_catcher: &mut BTreeMap<i64, PerPosition>,
-    ) -> Result<Option<u32>> {
-        let mut last_read_pos: Option<u32> = None;
+        current_pos: i32,
+        read_catcher: &mut BTreeMap<i32, PerPosition>,
+    ) -> Result<Option<i32>> {
+        let mut last_read_pos: Option<i32> = None;
         'outer: loop {
             if let Some(last_read_pos) = last_read_pos {
                 if last_read_pos > current_pos {
@@ -1125,10 +1124,10 @@ impl Engine {
                 None => return Ok(None),
             };
 
-            let corrected_position = if max_skip_len>0 {
+            let corrected_position = if max_skip_len > 0 {
                 read.corrected_pos(max_skip_len)
             } else {
-                Some(read.pos())
+                Some(read.pos() as i32) //this is safe. it's an aligned read, must be <2^31
             };
             last_read_pos = Some(
                 read.pos()
@@ -1151,14 +1150,19 @@ impl Engine {
                 } else {
                     &mut output.reads_forward
                 };
-                if (
-                    (corrected_position as u32) < chunk.start && chunk.start > 0
+                if (chunk.start > 0 && corrected_position < chunk.start as i32)
                     //reads in the first chunk, that would've started to the left are
                     //also accepted
-                ) || ((corrected_position as u32) >= chunk.stop)
+                 || (corrected_position >= chunk.stop as i32)
                 {
                     //this ensures we count a read only in the chunk where it's left most
                     //pos is in.
+                    dbg!(
+                        "not in region",
+                        std::str::from_utf8(read.qname()).unwrap(),
+                        corrected_position,
+                        chunk
+                    );
                     res.push((AnnotatedRead::NotInRegion, *org_index));
                     *org_index += 1;
                     continue;
@@ -1174,7 +1178,7 @@ impl Engine {
                 }
 
                 let barcode = {
-                    match  self.cell_barcode.as_ref()  {
+                    match self.cell_barcode.as_ref() {
                         Some(cb) => {
                             let bc = cb.extract(read).context("barcode extraction failed")?; // an error
                             match bc {
@@ -1234,7 +1238,7 @@ impl Engine {
                     }
                     AcceptReadResult::New => {
                         let info = AnnotatedReadInfo {
-                            corrected_position: corrected_position as u32,
+                            corrected_position: corrected_position,
                             reverse: read.is_reverse(),
                             hits: Hits {
                                 correct: genes_hit_correct.into_iter().collect(),
@@ -1255,7 +1259,7 @@ impl Engine {
                         res[idx_to_set_duplicate] = (AnnotatedRead::Duplicate, *old_org_index);
 
                         let info = AnnotatedReadInfo {
-                            corrected_position: corrected_position as u32,
+                            corrected_position: corrected_position,
                             reverse: read.is_reverse(),
                             hits: Hits {
                                 correct: genes_hit_correct,
@@ -1293,7 +1297,6 @@ impl Engine {
             header,
             rust_htslib::bam::Format::Bam,
         )?;
-        dbg!(chunk.str_id(), idx_to_annotated.len());
         /* let idx_to_annotated: HashMap<usize, &AnnotatedRead> = annotated_reads
         .iter()
         .map(|(read, org_index)| (*org_index, read))
@@ -1370,7 +1373,7 @@ impl Engine {
                         read.replace_aux(
                             b"XP",
                             //convert back into sam's 1 based coordinates.
-                            rust_htslib::bam::record::Aux::U32(info.corrected_position + 1u32),
+                            rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
                         )?;
 
                         if let Some(cell_barcode) = info.barcode.as_ref() {
@@ -1480,7 +1483,6 @@ pub struct TreeMatcher {
     count_strategy: crate::config::Strategy,
 }
 
-
 impl TreeMatcher {
     fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Result<Vec<Chunk>> {
         let cg = ChunkedGenome::new(&self.reference_to_aggregation_trees, bam)?; // can't get the ParallelBridge to work with our lifetimes.
@@ -1506,8 +1508,7 @@ impl TreeMatcher {
             let mut gene_nos_seen_match = Vec::new();
             let mut gene_nos_seen_reverse = Vec::new();
             for iv in blocks.iter() {
-                if chunk.interval_outside(iv.0, iv.1)
-                {
+                if chunk.interval_outside(iv.0, iv.1) {
                     // if this block is outside of the region
                     // don't count it at all.
                     // if it is on a block boundary
@@ -1579,8 +1580,7 @@ impl TreeMatcher {
             let mut bases_aligned = 0u32;
             for iv in blocks.iter() {
                 bases_aligned += iv.1 - iv.0;
-                if chunk.interval_outside(iv.0, iv.1)
-                {
+                if chunk.interval_outside(iv.0, iv.1) {
                     // if this block is outside of the region
                     // don't count it at all.
                     // if it is on a block boundary
@@ -1676,7 +1676,8 @@ impl TagMatcher {
                         name,
                         tid,
                         0,
-                        u32::try_from(bam.header().target_len(tid).unwrap_or(0)).expect("reference length > u32 capacitiy."),
+                        u32::try_from(bam.header().target_len(tid).unwrap_or(0))
+                            .expect("reference length > u32 capacitiy."),
                     ))
                 } else {
                     None
@@ -1784,5 +1785,3 @@ mod test {
         );
     }
 }
-
-
