@@ -80,7 +80,4 @@ impl Dedup for Umi {
         Ok(())
     }
 
-    fn new_per_position(&self) -> super::DedupPerPosition {
-        super::DedupPerPosition::Umi(HashMap::new())
-    }
 }

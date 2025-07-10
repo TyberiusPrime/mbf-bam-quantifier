@@ -23,7 +23,4 @@ impl Dedup for SingleCell {
         Ok(())
     }
 
-    fn new_per_position(&self) -> super::DedupPerPosition {
-        super::DedupPerPosition::SingleCell(HashMap::new())
-    }
 }

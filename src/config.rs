@@ -176,7 +176,7 @@ pub struct Output {
 
 impl Config {
     pub fn check(&self) -> Result<()> {
-        self.dedup.check(self)?;
+        self.dedup.mode.check(self)?;
         Ok(())
     }
 

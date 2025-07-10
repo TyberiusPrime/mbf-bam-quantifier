@@ -10,20 +10,45 @@ mod basic;
 mod singlecells;
 mod umi;
 
-#[enum_dispatch(DeduplicationStrategy)]
+#[enum_dispatch(DeduplicationMode)]
 pub trait Dedup: Send + Sync + Clone {
     fn check(&self, _config: &Config) -> anyhow::Result<()> {
         Ok(())
     }
-    fn new_per_position(&self) -> DedupPerPosition {
-        DedupPerPosition::None
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct DeduplicationStrategy {
+    //this is 'flattend' into the [dedup]
+    #[serde(flatten)]
+    pub mode: DeduplicationMode,
+    #[serde(default)]
+    pub bucket: DeduplicationBucket,
+}
+
+impl DeduplicationStrategy {
+
+    pub fn new_bucket(&self) -> DedupPerBucket {
+        match &self.mode {
+            DeduplicationMode::NoDedup(_) => DedupPerBucket::None,
+            DeduplicationMode::Umi(_) => DedupPerBucket::Umi(HashMap::new()),
+            DeduplicationMode::SingleCell(_) => DedupPerBucket::SingleCell(HashMap::new()),
+        }
     }
 }
 
+#[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, Default)]
+pub enum DeduplicationBucket {
+    #[default]
+    PerPosition,
+    PerReference,
+}
+
 #[derive(serde::Deserialize, Debug, Clone, strum_macros::Display)]
-#[serde(tag = "mode")]
 #[enum_dispatch]
-pub enum DeduplicationStrategy {
+//have it read the mode field
+#[serde(tag = "mode")]
+pub enum DeduplicationMode {
     #[serde(alias = "none")]
     NoDedup(basic::Basic), //todo: rename basic:basic
 
@@ -35,21 +60,12 @@ pub enum DeduplicationStrategy {
     SingleCell(singlecells::SingleCell),
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
-enum Direction {
-    #[serde(alias = "forward")]
-    Forward,
-    #[serde(alias = "reverse")]
-    Reverse,
-}
-
 #[derive(PartialEq, Eq)]
 pub struct MappingQuality {
     no_of_alignments: u8,
     mapq: u8,
     //consider deciding on cigar length as well?
 }
-
 
 impl Ord for MappingQuality {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -65,8 +81,7 @@ impl PartialOrd for MappingQuality {
     }
 }
 
-
-pub enum DedupPerPosition {
+pub enum DedupPerBucket {
     None,
     Umi(HashMap<Vec<u8>, (usize, MappingQuality)>),
     SingleCell(HashMap<(Vec<u8>, Vec<u8>), (usize, MappingQuality)>),
@@ -78,7 +93,7 @@ pub enum AcceptReadResult {
     DuplicateButPrefered(usize),
 }
 
-impl DedupPerPosition {
+impl DedupPerBucket {
     pub fn accept_read(
         &mut self,
         read: &bam::record::Record,
@@ -87,8 +102,8 @@ impl DedupPerPosition {
         barcode: Option<&Vec<u8>>,
     ) -> AcceptReadResult {
         match self {
-            DedupPerPosition::None => AcceptReadResult::New,
-            DedupPerPosition::Umi(map) => {
+            DedupPerBucket::None => AcceptReadResult::New,
+            DedupPerBucket::Umi(map) => {
                 let umi = umi
                     .expect("UMI should be extracted before deduplication")
                     .as_slice();
@@ -114,7 +129,7 @@ impl DedupPerPosition {
                     }
                 }
             }
-            DedupPerPosition::SingleCell(map) => {
+            DedupPerBucket::SingleCell(map) => {
                 let umi = umi
                     .expect("UMI should be extracted before deduplication")
                     .as_slice();
@@ -122,12 +137,12 @@ impl DedupPerPosition {
                     .expect("Barcode should be extracted before deduplication")
                     .as_slice();
 
-                /* println!("read {:?} pos {}, umi {}, barcode {}", 
-                    std::str::from_utf8(read.qname()),
-                    read.pos(),
-                    std::str::from_utf8(umi).unwrap_or("invalid UMI"),
-                    std::str::from_utf8(barcode).unwrap_or("invalid barcode"));
- */
+                /* println!("read {:?} pos {}, umi {}, barcode {}",
+                                   std::str::from_utf8(read.qname()),
+                                   read.pos(),
+                                   std::str::from_utf8(umi).unwrap_or("invalid UMI"),
+                                   std::str::from_utf8(barcode).unwrap_or("invalid barcode"));
+                */
                 let this_mq = MappingQuality {
                     no_of_alignments: read.no_of_alignments().try_into().unwrap_or(255),
                     mapq: read.mapq(),

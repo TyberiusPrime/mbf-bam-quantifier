@@ -674,7 +674,7 @@ impl Output {
 struct PerPosition {
     reads_forward: Vec<(AnnotatedRead, usize)>,
     reads_reverse: Vec<(AnnotatedRead, usize)>,
-    dedup_storage: crate::deduplication::DedupPerPosition,
+    dedup_storage: crate::deduplication::DedupPerBucket,
 }
 
 struct OutputBamInfo {
@@ -1143,7 +1143,7 @@ impl Engine {
                         .or_insert_with(|| PerPosition {
                             reads_forward: Vec::new(),
                             reads_reverse: Vec::new(),
-                            dedup_storage: self.dedup_strategy.new_per_position(),
+                            dedup_storage: self.dedup_strategy.new_bucket(),
                         });
                 let res = if read.is_reverse() {
                     &mut output.reads_reverse
