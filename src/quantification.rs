@@ -1,8 +1,13 @@
 use std::collections::HashSet;
 
+use crate::{
+    config::{Input, Output},
+    deduplication::DeduplicationStrategy,
+    engine,
+    extractors::UMIExtraction,
+};
 use anyhow::{Context, Result};
 use rust_htslib::bam::Read;
-use crate::{config::{Input, Output}, deduplication::DeduplicationStrategy, engine, extractors::UMIExtraction};
 
 pub fn quantify(
     input: &Input,
@@ -76,24 +81,29 @@ pub fn quantify(
             let bam = rust_htslib::bam::Reader::from_path(input.bam.as_str())
                 .context("Failed to open BAM file")?;
             let header = bam.header();
-            let references: Result<Vec<(String, u64)>> = header
-                .target_names()
-                .iter()
-                .enumerate()
-                .map(|(tid, name)| {
-                    Ok((
-                        std::str::from_utf8(name)
-                            .context("reference name was'nt utf8")?
-                            .to_string(),
-                        header
-                            .target_len(u32::try_from(tid).expect("too many references"))
-                            .context("No length for tid?!")?,
-                    ))
-                })
-                .collect();
+            let references: Result<Vec<(String, i32, u64)>> =
+                header
+                    .target_names()
+                    .iter()
+                    .enumerate()
+                    .map(|(tid, name)| {
+                        Ok((
+                            std::str::from_utf8(name)
+                                .context("reference name was'nt utf8")?
+                                .to_string(),
+                            tid.try_into()
+                                .expect("tid did not fit in i32, but BAM spec says it's an i32"),
+                            header
+                                .target_len(u32::try_from(tid).expect(
+                                    "tid did not fit in i32, but BAM spec says it's an i32",
+                                ))
+                                .context("No length for tid?!")?,
+                        ))
+                    })
+                    .collect();
             let references = references?;
             let sorted_output_keys: Vec<String> =
-                references.iter().map(|(name, _)| name.clone()).collect();
+                references.iter().map(|(name, _tid, _length)| name.clone()).collect();
 
             let output = if cell_barcode.is_some() {
                 engine::Output::new_singlecell(output.directory.clone(), Some(sorted_output_keys))?
@@ -119,7 +129,6 @@ pub fn quantify(
         }
 
         crate::config::Source::BamTag(crate::config::BamTag { tag }) => {
-
             let output = if cell_barcode.is_some() {
                 engine::Output::new_singlecell(output.directory.clone(), None)?
             } else {

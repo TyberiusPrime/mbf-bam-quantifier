@@ -1,3 +1,6 @@
+# StarSolo groups umis by gene.
+# this dataset accidentially doesn't trigger the difference between gene and position level
+# umi dedup.
 [input]
     bam = "input.bam"
 	correct_reads_for_clipping = false # starsolo doesn't. 

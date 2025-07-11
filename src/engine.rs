@@ -8,6 +8,7 @@ use string_interner::StringInterner;
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
+use crate::config::MatchDirection;
 use crate::deduplication::{AcceptReadResult, DeduplicationStrategy};
 use crate::extractors::UMIExtractor;
 use crate::filters::ReadFilter;
@@ -156,6 +157,7 @@ pub struct AnnotatedReadInfo {
 pub enum ReadToGeneMatcher {
     TreeMatcher(TreeMatcher),
     TagMatcher(TagMatcher),
+    ReferenceMatcher(ReferenceMatcher),
 }
 
 impl ReadToGeneMatcher {
@@ -163,6 +165,7 @@ impl ReadToGeneMatcher {
         match self {
             ReadToGeneMatcher::TreeMatcher(matcher) => matcher.generate_chunks(bam),
             ReadToGeneMatcher::TagMatcher(matcher) => matcher.generate_chunks(bam),
+            ReadToGeneMatcher::ReferenceMatcher(matcher) => matcher.generate_chunks(bam),
         }
     }
 
@@ -178,6 +181,7 @@ impl ReadToGeneMatcher {
         match self {
             ReadToGeneMatcher::TreeMatcher(matcher) => matcher.hits(chunk, read, interner),
             ReadToGeneMatcher::TagMatcher(matcher) => matcher.hits(chunk, read, interner),
+            ReadToGeneMatcher::ReferenceMatcher(matcher) => matcher.hits(chunk, read, interner),
         }
     }
 }
@@ -749,7 +753,7 @@ impl Engine {
         })
     }
     pub fn from_references(
-        references: Vec<(String, u64)>,
+        references: Vec<(String, i32, u64)>,
         filters: Vec<crate::filters::Filter>,
         dedup_strategy: DeduplicationStrategy,
         umi_extractor: Option<crate::extractors::UMIExtraction>,
@@ -757,24 +761,14 @@ impl Engine {
         count_strategy: crate::config::Strategy,
         output: Output,
     ) -> Result<Self> {
-        let mut trees: HashMap<String, (OurTree, Vec<String>)> = HashMap::new();
-        for (seq_name, length) in references.iter() {
-            let mut tree = OurTree::new();
-            let start = 0;
-            let stop = *length as u32;
-            tree.insert(
-                start..stop,             //these are already 0-based
-                (0, Strand::Forward), // no gene numbers here, just a dummy
-            );
-            let genes_in_order = vec![seq_name.clone()];
-            trees.insert(seq_name.clone(), (tree, genes_in_order));
-        }
-
+        let tids_to_include: Vec<i32> = references
+            .iter()
+            .map(|(_name, tid, _length)| *tid)
+            .collect();
         Ok(Engine {
-            matcher: ReadToGeneMatcher::TreeMatcher(TreeMatcher {
-                reference_to_count_trees: trees.clone(),
-                reference_to_aggregation_trees: trees,
-                count_strategy,
+            matcher: ReadToGeneMatcher::ReferenceMatcher(ReferenceMatcher {
+                tids_to_include,
+                direction: count_strategy.direction,
             }),
             filters,
             dedup_strategy,
@@ -1547,12 +1541,18 @@ impl TreeMatcher {
                         read.is_reverse(),
                         region_strand,
                     ) {
-                        (MatchDirection::Forward, false, Strand::Forward) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, false, Strand::Forward) => {
+                            &mut gene_nos_seen_match
+                        }
                         (MatchDirection::Forward, false, Strand::Reverse) => {
                             &mut gene_nos_seen_reverse
                         }
-                        (MatchDirection::Forward, true, Strand::Forward) => &mut gene_nos_seen_reverse,
-                        (MatchDirection::Forward, true, Strand::Reverse) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, true, Strand::Forward) => {
+                            &mut gene_nos_seen_reverse
+                        }
+                        (MatchDirection::Forward, true, Strand::Reverse) => {
+                            &mut gene_nos_seen_match
+                        }
                         (MatchDirection::Forward, _, Strand::Unstranded) => {
                             &mut gene_nos_seen_match
                         }
@@ -1560,8 +1560,12 @@ impl TreeMatcher {
                         (MatchDirection::Reverse, false, Strand::Forward) => {
                             &mut gene_nos_seen_reverse
                         }
-                        (MatchDirection::Reverse, false, Strand::Reverse) => &mut gene_nos_seen_match,
-                        (MatchDirection::Reverse, true, Strand::Forward) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, false, Strand::Reverse) => {
+                            &mut gene_nos_seen_match
+                        }
+                        (MatchDirection::Reverse, true, Strand::Forward) => {
+                            &mut gene_nos_seen_match
+                        }
                         (MatchDirection::Reverse, true, Strand::Reverse) => {
                             &mut gene_nos_seen_reverse
                         }
@@ -1623,12 +1627,18 @@ impl TreeMatcher {
                         read.is_reverse(),
                         region_strand,
                     ) {
-                        (MatchDirection::Forward, false, Strand::Forward) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, false, Strand::Forward) => {
+                            &mut gene_nos_seen_match
+                        }
                         (MatchDirection::Forward, false, Strand::Reverse) => {
                             &mut gene_nos_seen_reverse
                         }
-                        (MatchDirection::Forward, true, Strand::Forward) => &mut gene_nos_seen_reverse,
-                        (MatchDirection::Forward, true, Strand::Reverse) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, true, Strand::Forward) => {
+                            &mut gene_nos_seen_reverse
+                        }
+                        (MatchDirection::Forward, true, Strand::Reverse) => {
+                            &mut gene_nos_seen_match
+                        }
                         (MatchDirection::Forward, _, Strand::Unstranded) => {
                             &mut gene_nos_seen_match
                         }
@@ -1636,8 +1646,12 @@ impl TreeMatcher {
                         (MatchDirection::Reverse, false, Strand::Forward) => {
                             &mut gene_nos_seen_reverse
                         }
-                        (MatchDirection::Reverse, false, Strand::Reverse) => &mut gene_nos_seen_match,
-                        (MatchDirection::Reverse, true, Strand::Forward) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, false, Strand::Reverse) => {
+                            &mut gene_nos_seen_match
+                        }
+                        (MatchDirection::Reverse, true, Strand::Forward) => {
+                            &mut gene_nos_seen_match
+                        }
                         (MatchDirection::Reverse, true, Strand::Reverse) => {
                             &mut gene_nos_seen_reverse
                         }
@@ -1719,6 +1733,66 @@ impl TagMatcher {
         let genes_hit_reverse = Vec::new();
         if let Ok(rust_htslib::bam::record::Aux::String(value)) = read.aux(&self.tag) {
             genes_hit_correct.push(interner.get_or_intern(value));
+        }
+        Ok((genes_hit_correct, genes_hit_reverse))
+    }
+}
+
+pub struct ReferenceMatcher {
+    tids_to_include: Vec<i32>,
+    direction: MatchDirection,
+}
+
+impl ReferenceMatcher {
+    fn generate_chunks(&self, bam: rust_htslib::bam::IndexedReader) -> Result<Vec<Chunk>> {
+        Ok(bam
+            .header()
+            .target_names()
+            .iter()
+            .enumerate()
+            .filter_map(|(tid, name)| {
+                let tid: u32 = tid.try_into().expect("tid should fit into u32");
+                if self.tids_to_include.iter().any(|x| *x as u32 == tid) {
+                    let name = std::str::from_utf8(*name)
+                        .expect("Failed to convert target name to string")
+                        .to_string();
+                    Some(Chunk::new(
+                        name,
+                        tid as u32,
+                        0,
+                        u32::try_from(bam.header().target_len(tid).unwrap_or(0))
+                            .expect("reference length > u32 capacitiy."),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect())
+    }
+
+    fn hits(
+        &self,
+        chunk: &Chunk,
+        read: &rust_htslib::bam::Record,
+        interner: &mut OurInterner,
+    ) -> Result<(
+        Vec<string_interner::symbol::SymbolU32>,
+        Vec<string_interner::symbol::SymbolU32>,
+    )> {
+        let mut genes_hit_correct = Vec::new();
+        let mut genes_hit_reverse = Vec::new();
+        if match (&self.direction, read.is_reverse()) {
+            (MatchDirection::Ignore, _) => true,
+            (MatchDirection::Forward, true) => false,
+            (MatchDirection::Forward, false) => true,
+            (MatchDirection::Reverse, true) => true,
+            (MatchDirection::Reverse, false) => false,
+        } {
+            genes_hit_correct.push(interner.get_or_intern(&chunk.chr));
+        }
+        else 
+        {
+            genes_hit_reverse.push(interner.get_or_intern(&chunk.chr));
         }
         Ok((genes_hit_correct, genes_hit_reverse))
     }

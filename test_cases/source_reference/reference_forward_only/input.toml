@@ -1,0 +1,16 @@
+# a basic reproduction of samtools idxstats
+[input]
+	bam = "input.bam"
+
+[input.source]
+	mode = "bam_references"
+
+[strategy]
+	direction = 'forward'
+
+[dedup]
+   mode = "none"
+
+
+[output]
+	directory = 'output'
