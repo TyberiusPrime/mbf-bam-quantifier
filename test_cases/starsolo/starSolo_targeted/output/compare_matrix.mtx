@@ -62,9 +62,6 @@ a = read_matrix(should)
 print("loading actual")
 b = read_matrix(actual)
 
-Path("a.txt").write_text("\n".join((str(x) for x in a.items())))
-Path("b.txt").write_text("\n".join((str(x) for x in b.items())))
-
 if a != b:
     print("Matrix differed")
     print(len(a), len(b))

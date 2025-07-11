@@ -41,6 +41,7 @@ mimalloc = "0.1.47"
 measure_time = "0.9.0"
 env_logger = "0.11.8"
 twoway = "0.2.2"
+log = "0.4.27"
 
 [[bin]]
 name = "mbf-bam-quantifier-test-runner"

@@ -678,7 +678,8 @@ impl Output {
 struct PerPosition {
     reads_forward: Vec<(AnnotatedRead, usize)>,
     reads_reverse: Vec<(AnnotatedRead, usize)>,
-    dedup_storage: crate::deduplication::DedupPerBucket,
+    dedup_storage_forward: crate::deduplication::DedupPerBucket,
+    dedup_storage_reverse: crate::deduplication::DedupPerBucket,
 }
 
 struct OutputBamInfo {
@@ -1161,12 +1162,13 @@ impl Engine {
                 .or_insert_with(|| PerPosition {
                     reads_forward: Vec::new(),
                     reads_reverse: Vec::new(),
-                    dedup_storage: self.dedup_strategy.new_bucket(),
+                    dedup_storage_forward: self.dedup_strategy.new_bucket(),
+                    dedup_storage_reverse: self.dedup_strategy.new_bucket(),
                 });
-            let res = if read.is_reverse() {
-                &mut output.reads_reverse
+            let (res, dedup_storage) = if read.is_reverse() {
+                (&mut output.reads_reverse, &mut output.dedup_storage_reverse)
             } else {
-                &mut output.reads_forward
+                (&mut output.reads_forward, &mut output.dedup_storage_forward)
             };
             if (chunk.start > 0 && position_for_bounds_check < chunk.start as i32)
                     //reads in the first chunk, that would've started to the left are
@@ -1244,9 +1246,7 @@ impl Engine {
                 self.matcher.hits(chunk, read, interner)?;
 
             let do_accept: AcceptReadResult =
-                output
-                    .dedup_storage
-                    .accept_read(read, res.len(), umi.as_ref(), barcode.as_ref());
+                dedup_storage.accept_read(read, res.len(), umi.as_ref(), barcode.as_ref());
             match do_accept {
                 AcceptReadResult::Duplicated => {
                     res.push((AnnotatedRead::Duplicate, *org_index));
@@ -1326,6 +1326,10 @@ impl Engine {
         while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
             if let Some(anno_read) = idx_to_annotated.get_mut(&ii) {
+                //remove old tags
+                for tag in [b"XF", b"XQ", b"XR", b"XP", b"CB"] {
+                    read.remove_aux(tag).ok();
+                }
                 match anno_read {
                     AnnotatedRead::NotInRegion => continue,
                     AnnotatedRead::Filtered => {
@@ -1789,9 +1793,7 @@ impl ReferenceMatcher {
             (MatchDirection::Reverse, false) => false,
         } {
             genes_hit_correct.push(interner.get_or_intern(&chunk.chr));
-        }
-        else 
-        {
+        } else {
             genes_hit_reverse.push(interner.get_or_intern(&chunk.chr));
         }
         Ok((genes_hit_correct, genes_hit_reverse))

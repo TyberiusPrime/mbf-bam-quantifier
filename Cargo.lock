@@ -1092,6 +1092,7 @@ dependencies = [
  "human-panic",
  "itertools 0.14.0",
  "linereader",
+ "log",
  "measure_time",
  "memchr",
  "mimalloc",

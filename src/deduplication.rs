@@ -25,7 +25,7 @@ impl DeduplicationStrategy {
 
     pub fn check(&self, config: &Config) -> anyhow::Result<()> {
         match self.mode {
-            DeduplicationMode::NoDedup => {},
+            DeduplicationMode::NoDedup => {}
             DeduplicationMode::Umi => {
                 if config.umi.is_none() {
                     bail!("UMI deduplication quantification requires UMI extraction to be defined in the configuration.");
@@ -66,7 +66,7 @@ pub enum DeduplicationMode {
     SingleCell,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct MappingQuality {
     no_of_alignments: u8,
     mapq: u8,
