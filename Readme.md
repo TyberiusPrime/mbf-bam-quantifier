@@ -1,22 +1,23 @@
-# featureCounts
+# mbf-bam-quantifier
 
-mbf-bam-quantifier can achieve the same read counts as featureCounts.
+A most flexible, structured bam quantifier.
 
-To do so, 
- - set the quant mode to 'unstranded_featurecounts' or 'stranded_featurecounts',
- - set input.source.duplicate_handling = 'rename'
- - set a filter against multimapping reads.
+It filters reads, deduplicates on UMIs, counts in regions or genes,
+for bulk or single cell sequencing, stranded or unnstranded.
 
-(you can see the testcases in test_cases/integration_tests/feature_counts_exon_level_stranded/
-for an illustration)
-
-This works then the same way as featureCounts, which reports
-repeated exons in the source file multiple times, but sets all their reads to 0.
-
-**That's likely not what you want. Or would have expected**
+You get to choose 
+ - where your regions come from
+ - what reads to consider,
+ - where barcodes and UMIs are being read from,
+ - what's considered a UMI duplicate, b
+ - how and if barcodes are matched to a whit list and 
+ - whether reads must match the region's strand.
 
 
+It's fast (~ 100 million reads a minute, give or take)
+and has extensive test coverage.
 
 
-document tags in write_output_bam
-XF 1 = filtered, 2 = filtered by quant, 3 = duplicate...
+
+
+
