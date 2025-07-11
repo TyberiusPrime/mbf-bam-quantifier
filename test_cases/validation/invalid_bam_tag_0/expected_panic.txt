@@ -1,0 +1,1 @@
+BAM tag must start with [A-Za-z]

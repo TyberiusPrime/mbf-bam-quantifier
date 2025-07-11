@@ -1,0 +1,1 @@
+BAM filename can not be an empty string

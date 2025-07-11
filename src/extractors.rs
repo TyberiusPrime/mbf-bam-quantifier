@@ -17,6 +17,10 @@ where
 
 #[enum_dispatch(UMIExtraction)]
 pub trait UMIExtractor {
+    fn check(&self, _config: &crate::config::Config) -> Result<()> {
+        // Default implementation does nothing, can be overridden by specific extractors
+        Ok(())
+    }
     fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>>;
 }
 
@@ -33,7 +37,9 @@ pub enum UMIExtraction {
 
     #[serde(alias = "read_region")]
     ReadRegion(ReadRegion),
-    #[serde(alias = "Tag")]
+    #[serde(alias = "BamTag")]
+    #[serde(alias = "bam_tag")]
+    #[serde(alias = "tag")]
     Tag(Tag),
 }
 
@@ -78,6 +84,10 @@ pub struct ReadRegion {
 }
 
 impl UMIExtractor for ReadRegion {
+    fn check(&self, _config: &crate::config::Config) -> Result<()> {
+        Ok(self.validate()?)
+    }
+
     fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
         if self.stop > read.seq_len() as u16 {
             bail!(
@@ -90,7 +100,8 @@ impl UMIExtractor for ReadRegion {
         Ok(Some(seq))
     }
 }
-#[derive(serde::Deserialize, Debug, Clone, Validate)]
+
+#[derive(serde::Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Tag {
     #[serde(deserialize_with = "crate::config::deser_tag")]

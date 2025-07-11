@@ -1,0 +1,14 @@
+# a basic reproduction of samtools idxstats
+[input]
+	bam = "input.bam"
+	source.mode = "bam_tag"
+	source.tag = 'x-'
+
+
+
+[dedup]
+   mode = "none"
+
+
+[output]
+	directory = "output"

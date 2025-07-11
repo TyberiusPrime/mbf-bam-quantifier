@@ -1,0 +1,13 @@
+# a basic reproduction of samtools idxstats
+[input]
+	bam = ""
+	source.mode = "BamReferences"
+
+
+
+[dedup]
+   mode = "none"
+
+
+[output]
+	directory = "output"

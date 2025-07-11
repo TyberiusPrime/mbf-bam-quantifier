@@ -3,7 +3,6 @@ use std::{collections::HashSet, path::PathBuf};
 
 use crate::extractors::{self, UMIExtractor};
 use serde::Deserializer;
-use serde_valid::Validate;
 
 pub fn u8_from_char_or_number<'de, D>(deserializer: D) -> Result<u8, D::Error>
 where
@@ -42,7 +41,7 @@ where
 
 type Whitelist = HashSet<Vec<u8>>;
 
-#[derive(serde::Deserialize, Debug, Clone, Validate)]
+#[derive(serde::Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CellBarcodes {
     extract: extractors::UMIExtraction,
@@ -71,6 +70,10 @@ impl CellBarcodes {
             })
             .collect();
         self.whitelists = wl?;
+        Ok(())
+    }
+
+    pub fn check(&self, _config: &crate::config::Config) -> Result<()>{
         Ok(())
     }
 

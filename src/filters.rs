@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::bam_ext::BamRecordExtensions;
 use enum_dispatch::enum_dispatch;
@@ -14,6 +14,11 @@ pub enum KeepOrRemove {
 
 #[enum_dispatch(Filter)]
 pub trait ReadFilter: Send + Sync {
+
+    fn check(&self, _config: &crate::config::Config) -> Result<()> {
+        // Default implementation does nothing, can be overridden by specific filters
+        Ok(())
+    }
 
     fn init(&mut self, _header: &rust_htslib::bam::HeaderView) -> Result<()>{
         // Default implementation does nothing, can be overridden by specific filters
@@ -126,16 +131,23 @@ impl ReadFilter for Spliced {
 /// (This way, we're both saving the time and the memory to process them,
 /// which can be a life safer if you've a file with a gazillion reads mapping to the same
 /// coordinates, for example phiX).
-#[derive(serde::Deserialize, Debug, Clone, serde::Serialize, serde_valid::Validate)]
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
 pub struct Reference {
     pub action: KeepOrRemove,
-    #[validate(min_length = 1)]
     pub references: Vec<String>,
     #[serde(skip)]
     tids: Option<HashSet<u32>>,
 }
 
 impl ReadFilter for Reference{
+
+    fn check(&self, _config: &crate::config::Config) -> Result<()> {
+        if self.references.is_empty() {
+            bail!("Reference filter requires at least one reference to filter on.");
+        }
+        Ok(())
+    }
+
     fn init(&mut self, header: &rust_htslib::bam::HeaderView) ->Result<()>{
         let mut tids = HashSet::new();
         for r in &self.references {

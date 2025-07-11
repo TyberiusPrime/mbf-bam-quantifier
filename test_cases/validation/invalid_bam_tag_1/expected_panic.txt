@@ -1,0 +1,1 @@
+BAM tag 2nd letter must conform to [A-Za-z0-9]

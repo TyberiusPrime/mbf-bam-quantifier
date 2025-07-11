@@ -1,4 +1,5 @@
 use itertools::izip;
+use serde_valid::Validate;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -6,12 +7,12 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_valid::Validate;
 
 use crate::{
     barcodes::CellBarcodes,
-    deduplication::{DeduplicationStrategy},
-    extractors::UMIExtraction,
+    deduplication::DeduplicationStrategy,
+    extractors::{UMIExtraction, UMIExtractor},
+    filters::ReadFilter,
 };
 
 #[derive(Deserialize, Debug, Clone)]
@@ -27,7 +28,6 @@ pub struct Config {
     pub strategy: Strategy,
     #[serde(alias = "UMI")]
     pub umi: Option<UMIExtraction>,
-
     pub cell_barcodes: Option<CellBarcodes>,
     pub output: Output,
 }
@@ -41,15 +41,23 @@ fn default_correct_reads_for_clipping() -> bool {
     true // this is the default in umi-tools
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
+#[derive(Deserialize, Debug, Clone, Serialize, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
+    #[validate(min_length = 1, message = "BAM filename can not be an empty string")]
     pub bam: String,
     #[serde(default = "default_correct_reads_for_clipping")]
     pub correct_reads_for_clipping: bool,
     pub source: Source,
     #[serde(default = "default_max_skip_length")]
     pub max_skip_length: u32,
+}
+
+impl Input {
+    fn check(&self, config: &Config) -> Result<()> {
+        self.validate()?;
+        self.source.check(config)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
@@ -64,21 +72,48 @@ pub enum Source {
     BamTag(BamTag),
 }
 
+impl Source {
+    fn check(&self, _config: &Config) -> Result<()> {
+        match self {
+            Source::Gtf(gtf_config) => {
+                if gtf_config.filename.is_empty() {
+                    bail!("GTF filename cannot be empty");
+                }
+                if gtf_config.feature.is_empty() {
+                    bail!("GTF feature cannot be empty");
+                }
+                if gtf_config.id_attribute.is_empty() {
+                    bail!("GTF id_attribute cannot be empty");
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 pub fn deser_tag<'de, D>(deserializer: D) -> core::result::Result<[u8; 2], D::Error>
 where
     D: Deserializer<'de>,
 {
     let s: String = Deserialize::deserialize(deserializer)?;
     let b = s.as_bytes();
-    if b.len() != 2 || b[0] != b[0].to_ascii_uppercase() || b[1] != b[1].to_ascii_uppercase() {
+    if b.len() != 2 {
         Err(serde::de::Error::custom(
-            "Tag must be exactle two uppercase letters",
+            "Tag must be exactly two letters [A-Za-z][A-Za-z0-9]",
         ))?;
     }
+    if !b[0].is_ascii_alphabetic() {
+        Err(serde::de::Error::custom("BAM tag must start with [A-Za-z]"))?;
+    }
+    if !b[1].is_ascii_alphanumeric() {
+        Err(serde::de::Error::custom("BAM tag 2nd letter must conform to [A-Za-z0-9]"))?;
+    }
+
     Ok([b[0], b[1]])
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize, Validate)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BamTag {
     #[serde(deserialize_with = "deser_tag")]
@@ -106,7 +141,6 @@ pub enum OverlapMode {
     IntersectionNonEmpty,
 }
 
-
 #[derive(Deserialize, Debug, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub enum MultiRegionHandling {
@@ -116,7 +150,6 @@ pub enum MultiRegionHandling {
     #[default]
     CountBoth,
 }
-
 
 #[derive(Deserialize, Debug, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -129,7 +162,6 @@ pub enum MatchDirection {
     #[serde(alias = "ignore")]
     Ignore,
 }
-
 
 #[derive(Deserialize, Debug, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -177,6 +209,17 @@ pub struct Output {
 impl Config {
     pub fn check(&self) -> Result<()> {
         self.dedup.check(self)?;
+        for f in &self.filter {
+            f.check(self)?;
+        }
+        //self.strategy.check(self)?; nothing to chek
+        self.input.check(self)?;
+        if let Some(umi) = self.umi.as_ref() {
+            umi.check(self)?;
+        }
+        if let Some(cell_barcodes) = self.cell_barcodes.as_ref() {
+            cell_barcodes.check(self)?;
+        }
         Ok(())
     }
 
