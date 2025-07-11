@@ -89,16 +89,16 @@ fn vector_new_empty_push(count: u32, value: String) -> Vec<String> {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strand {
-    Plus,
-    Minus,
+    Forward,
+    Reverse,
     Unstranded,
 }
 
 impl std::fmt::Display for Strand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Strand::Plus => write!(f, "+"),
-            Strand::Minus => write!(f, "-"),
+            Strand::Forward => write!(f, "+"),
+            Strand::Reverse => write!(f, "-"),
             Strand::Unstranded => write!(f, "."),
         }
     }
@@ -109,8 +109,8 @@ impl FromStr for Strand {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
-            "+" => Strand::Plus,
-            "-" => Strand::Minus,
+            "+" => Strand::Forward,
+            "-" => Strand::Reverse,
             "." | "_" => Strand::Unstranded,
             _ => bail!("Invalid strand value: {}", s),
         })
@@ -120,8 +120,8 @@ impl FromStr for Strand {
 impl From<&Strand> for i8 {
     fn from(strand: &Strand) -> i8 {
         match strand {
-            Strand::Plus => 1,
-            Strand::Minus => -1,
+            Strand::Forward => 1,
+            Strand::Reverse => -1,
             Strand::Unstranded => 0,
         }
     }
@@ -269,8 +269,8 @@ pub fn parse_minimal(
         target.start.push(record.start().get() as u64 - 1);
         target.end.push(record.end().get() as u64);
         target.strand.push(match record.strand() {
-            noodles_gff::feature::record::Strand::Forward => Strand::Plus,
-            noodles_gff::feature::record::Strand::Reverse => Strand::Minus,
+            noodles_gff::feature::record::Strand::Forward => Strand::Forward,
+            noodles_gff::feature::record::Strand::Reverse => Strand::Reverse,
             _ => Strand::Unstranded,
         });
 

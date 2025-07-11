@@ -764,7 +764,7 @@ impl Engine {
             let stop = *length as u32;
             tree.insert(
                 start..stop,             //these are already 0-based
-                (0, Strand::Unstranded), // no gene numbers here, just a dummy
+                (0, Strand::Forward), // no gene numbers here, just a dummy
             );
             let genes_in_order = vec![seq_name.clone()];
             trees.insert(seq_name.clone(), (tree, genes_in_order));
@@ -1525,6 +1525,7 @@ impl TreeMatcher {
         if let crate::config::OverlapMode::Union = self.count_strategy.overlap {
             let mut gene_nos_seen_match = Vec::new();
             let mut gene_nos_seen_reverse = Vec::new();
+            //todo: I don't like having this duplication
             for iv in blocks.iter() {
                 if chunk.interval_outside(iv.0, iv.1) {
                     // if this block is outside of the region
@@ -1546,22 +1547,22 @@ impl TreeMatcher {
                         read.is_reverse(),
                         region_strand,
                     ) {
-                        (MatchDirection::Forward, false, Strand::Plus) => &mut gene_nos_seen_match,
-                        (MatchDirection::Forward, false, Strand::Minus) => {
+                        (MatchDirection::Forward, false, Strand::Forward) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, false, Strand::Reverse) => {
                             &mut gene_nos_seen_reverse
                         }
-                        (MatchDirection::Forward, true, Strand::Plus) => &mut gene_nos_seen_reverse,
-                        (MatchDirection::Forward, true, Strand::Minus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, true, Strand::Forward) => &mut gene_nos_seen_reverse,
+                        (MatchDirection::Forward, true, Strand::Reverse) => &mut gene_nos_seen_match,
                         (MatchDirection::Forward, _, Strand::Unstranded) => {
                             &mut gene_nos_seen_match
                         }
 
-                        (MatchDirection::Reverse, false, Strand::Plus) => {
+                        (MatchDirection::Reverse, false, Strand::Forward) => {
                             &mut gene_nos_seen_reverse
                         }
-                        (MatchDirection::Reverse, false, Strand::Minus) => &mut gene_nos_seen_match,
-                        (MatchDirection::Reverse, true, Strand::Plus) => &mut gene_nos_seen_match,
-                        (MatchDirection::Reverse, true, Strand::Minus) => {
+                        (MatchDirection::Reverse, false, Strand::Reverse) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, true, Strand::Forward) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, true, Strand::Reverse) => {
                             &mut gene_nos_seen_reverse
                         }
                         (MatchDirection::Reverse, _, Strand::Unstranded) => {
@@ -1622,22 +1623,22 @@ impl TreeMatcher {
                         read.is_reverse(),
                         region_strand,
                     ) {
-                        (MatchDirection::Forward, false, Strand::Plus) => &mut gene_nos_seen_match,
-                        (MatchDirection::Forward, false, Strand::Minus) => {
+                        (MatchDirection::Forward, false, Strand::Forward) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, false, Strand::Reverse) => {
                             &mut gene_nos_seen_reverse
                         }
-                        (MatchDirection::Forward, true, Strand::Plus) => &mut gene_nos_seen_reverse,
-                        (MatchDirection::Forward, true, Strand::Minus) => &mut gene_nos_seen_match,
+                        (MatchDirection::Forward, true, Strand::Forward) => &mut gene_nos_seen_reverse,
+                        (MatchDirection::Forward, true, Strand::Reverse) => &mut gene_nos_seen_match,
                         (MatchDirection::Forward, _, Strand::Unstranded) => {
                             &mut gene_nos_seen_match
                         }
 
-                        (MatchDirection::Reverse, false, Strand::Plus) => {
+                        (MatchDirection::Reverse, false, Strand::Forward) => {
                             &mut gene_nos_seen_reverse
                         }
-                        (MatchDirection::Reverse, false, Strand::Minus) => &mut gene_nos_seen_match,
-                        (MatchDirection::Reverse, true, Strand::Plus) => &mut gene_nos_seen_match,
-                        (MatchDirection::Reverse, true, Strand::Minus) => {
+                        (MatchDirection::Reverse, false, Strand::Reverse) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, true, Strand::Forward) => &mut gene_nos_seen_match,
+                        (MatchDirection::Reverse, true, Strand::Reverse) => {
                             &mut gene_nos_seen_reverse
                         }
                         (MatchDirection::Reverse, _, Strand::Unstranded) => {
@@ -1645,6 +1646,7 @@ impl TreeMatcher {
                         }
                         (MatchDirection::Ignore, _, _) => &mut gene_nos_seen_match,
                     };
+
                     let gene_id = interner.get_or_intern(&gene_ids[gene_no as usize]);
                     match target.entry(gene_id) {
                         std::collections::hash_map::Entry::Occupied(mut e) => {
