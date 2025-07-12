@@ -610,17 +610,23 @@ impl Output {
                         let mut parts = line.split_whitespace();
                         let feature_idx: usize = parts
                             .next()
-                            .context("Missing feature index in line")?
+                            .with_context(|| {
+                                format!("Missing feature index in line {line} {temp_filename:?}")
+                            })?
                             .parse()
                             .context("Failed to parse feature index")?;
                         let barcode = parts
                             .next()
-                            .context("Missing barcode in line")?
+                            .with_context(|| {
+                                format!("Missing barcode in line {line} {temp_filename:?}")
+                            })?
                             .as_bytes()
                             .to_vec();
                         let value: f64 = parts
                             .next()
-                            .context("Missing value in line")?
+                            .with_context(|| {
+                                format!("Missing value in line {line} {temp_filename:?}")
+                            })?
                             .parse()
                             .context("Failed to parse value")?;
 
@@ -1177,12 +1183,12 @@ impl Engine {
             {
                 //this ensures we count a read only in the chunk where it's left most
                 //pos is in.
-                dbg!(
+                /* dbg!(
                     "not in region",
                     std::str::from_utf8(read.qname()).unwrap(),
                     corrected_position,
                     chunk
-                );
+                ); */
                 res.push((AnnotatedRead::NotInRegion, *org_index));
                 *org_index += 1;
                 continue;
@@ -1244,6 +1250,22 @@ impl Engine {
             };
             let (genes_hit_correct, genes_hit_reverse) =
                 self.matcher.hits(chunk, read, interner)?;
+
+            for f in self.filters.iter() {
+                if f.remove_read_after_annotation(
+                    read,
+                    barcode.as_ref(),
+                    umi.as_ref(),
+                    &genes_hit_correct,
+                    &genes_hit_reverse,
+                    interner,
+                ) {
+                    // if the read does not pass the filter, skip it
+                    res.push((AnnotatedRead::Filtered, *org_index));
+                    *org_index += 1;
+                    continue 'outer;
+                }
+            }
 
             let do_accept: AcceptReadResult =
                 dedup_storage.accept_read(read, res.len(), umi.as_ref(), barcode.as_ref());

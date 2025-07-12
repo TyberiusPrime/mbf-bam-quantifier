@@ -1,5 +1,6 @@
-use std::collections::HashSet;
 use anyhow::{bail, Context, Result};
+use std::collections::HashSet;
+use string_interner::symbol::SymbolU32;
 
 use crate::bam_ext::BamRecordExtensions;
 use enum_dispatch::enum_dispatch;
@@ -14,18 +15,30 @@ pub enum KeepOrRemove {
 
 #[enum_dispatch(Filter)]
 pub trait ReadFilter: Send + Sync {
-
     fn check(&self, _config: &crate::config::Config) -> Result<()> {
         // Default implementation does nothing, can be overridden by specific filters
         Ok(())
     }
 
-    fn init(&mut self, _header: &rust_htslib::bam::HeaderView) -> Result<()>{
+    fn init(&mut self, _header: &rust_htslib::bam::HeaderView) -> Result<()> {
         // Default implementation does nothing, can be overridden by specific filters
         Ok(())
     }
 
-    fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool;
+    fn remove_read(&self, _read: &rust_htslib::bam::record::Record) -> bool {
+        false
+    }
+    fn remove_read_after_annotation(
+        &self,
+        _read: &rust_htslib::bam::record::Record,
+        _barcode: Option<&Vec<u8>>,
+        _umi: Option<&Vec<u8>>,
+        _genes_hit_correct: &Vec<SymbolU32>,
+        _genes_hit_reverse: &Vec<SymbolU32>,
+        _interner: &crate::engine::OurInterner,
+    ) -> bool {
+        false
+    }
 }
 
 #[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, serde::Serialize)]
@@ -46,7 +59,11 @@ pub enum Filter {
     Spliced(Spliced),
 
     #[serde(alias = "reference")]
-    Reference(Reference)
+    Reference(Reference),
+
+    #[serde(alias = "n_in_umi")]
+    #[serde(alias = "NInUMI")]
+    NInUmi(NInUmi),
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -139,8 +156,7 @@ pub struct Reference {
     tids: Option<HashSet<u32>>,
 }
 
-impl ReadFilter for Reference{
-
+impl ReadFilter for Reference {
     fn check(&self, _config: &crate::config::Config) -> Result<()> {
         if self.references.is_empty() {
             bail!("Reference filter requires at least one reference to filter on.");
@@ -148,10 +164,12 @@ impl ReadFilter for Reference{
         Ok(())
     }
 
-    fn init(&mut self, header: &rust_htslib::bam::HeaderView) ->Result<()>{
+    fn init(&mut self, header: &rust_htslib::bam::HeaderView) -> Result<()> {
         let mut tids = HashSet::new();
         for r in &self.references {
-            let tid = header.tid(r.as_bytes()).with_context(||format!("Reference not found in header: {r}"))?;
+            let tid = header
+                .tid(r.as_bytes())
+                .with_context(|| format!("Reference not found in header: {r}"))?;
             tids.insert(tid);
         }
         self.tids = Some(tids);
@@ -160,13 +178,39 @@ impl ReadFilter for Reference{
     fn remove_read(&self, _read: &rust_htslib::bam::record::Record) -> bool {
         false
         /* has already been filtered by the chunk filtering
-        let hit = self.tids.as_ref().unwrap().contains(&(read.tid() as u32));
-        match self.action {
-            KeepOrRemove::Keep => !hit,
-            KeepOrRemove::Remove => hit,
-        }
-*/
+                let hit = self.tids.as_ref().unwrap().contains(&(read.tid() as u32));
+                match self.action {
+                    KeepOrRemove::Keep => !hit,
+                    KeepOrRemove::Remove => hit,
+                }
+        */
     }
 }
 
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct NInUmi {
+    pub action: KeepOrRemove,
+}
 
+impl ReadFilter for NInUmi {
+    fn remove_read_after_annotation(
+        &self,
+        _read: &rust_htslib::bam::record::Record,
+        _barcode: Option<&Vec<u8>>,
+        umi: Option<&Vec<u8>>,
+        _genes_hit_correct: &Vec<SymbolU32>,
+        _genes_hit_reverse: &Vec<SymbolU32>,
+        _interner: &crate::engine::OurInterner,
+    ) -> bool {
+        if let Some(umi) = umi {
+            let hit = umi.iter().any(|x| *x == b'N');
+
+            match self.action {
+                KeepOrRemove::Keep => !hit,
+                KeepOrRemove::Remove => hit,
+            }
+        } else {
+            false
+        }
+    }
+}

@@ -73,7 +73,7 @@ impl CellBarcodes {
         Ok(())
     }
 
-    pub fn check(&self, _config: &crate::config::Config) -> Result<()>{
+    pub fn check(&self, _config: &crate::config::Config) -> Result<()> {
         Ok(())
     }
 
@@ -84,7 +84,11 @@ impl CellBarcodes {
     pub fn correct(&self, barcode: &[u8]) -> Option<Vec<u8>> {
         // possibly microopt: use cow...
         if self.whitelists.is_empty() {
-            return Some(barcode.to_vec());
+            if barcode.is_empty() {
+                return None;
+            } else {
+                return Some(barcode.to_vec());
+            }
         }
         let parts = barcode.split(|&b| b == self.separator_char);
         let mut out = Vec::new();

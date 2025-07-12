@@ -48,3 +48,4 @@
 
 - umi dedup per gene (not reference!)
 - umi dedup per (start, stop)?
+- test case for umi-n-filter
