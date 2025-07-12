@@ -1,0 +1,32 @@
+[input]
+bam = "input.bam"
+correct_reads_for_clipping = false
+
+[input.source]
+mode = "bam_references"
+
+[cell_barcodes]
+separator_char = "-"
+whitelist_files = ["input_BD_1.txt","input_BD_2.txt","input_BD_3.txt"]
+
+[cell_barcodes.extract]
+mode = "RegexName"
+regex = "barcode=([AGCT-]*)"
+
+[umi]
+mode = "RegexName"
+regex = "umi=([AGCT-]*)"
+
+[strategy]
+multi_region = "count_both"
+overlap = "union"
+direction = "Forward"
+
+[dedup]
+mode = "sc"
+umi_grouping = "unique"
+bucket = "PerReference"
+
+[output]
+directory = "output"
+write_annotated_bam=true
