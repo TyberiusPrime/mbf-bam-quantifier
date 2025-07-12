@@ -64,6 +64,10 @@ pub enum Filter {
     #[serde(alias = "n_in_umi")]
     #[serde(alias = "NInUMI")]
     NInUmi(NInUmi),
+
+    #[serde(alias = "polyx_umi")]
+    #[serde(alias = "PolyXUMI")]
+    PolyXUmi(PolyXUmi),
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -212,5 +216,34 @@ impl ReadFilter for NInUmi {
         } else {
             false
         }
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct PolyXUmi {
+    pub action: KeepOrRemove,
+}
+
+impl ReadFilter for PolyXUmi {
+    fn remove_read_after_annotation(
+        &self,
+        _read: &rust_htslib::bam::record::Record,
+        _barcode: Option<&Vec<u8>>,
+        umi: Option<&Vec<u8>>,
+        _genes_hit_correct: &Vec<SymbolU32>,
+        _genes_hit_reverse: &Vec<SymbolU32>,
+        _interner: &crate::engine::OurInterner,
+    ) -> bool {
+        if let Some(umi) = umi {
+            let mut it = umi.iter();
+            if let Some(first) = umi.first() {
+                let hit = it.all(|&x| x == *first);
+                return match self.action {
+                    KeepOrRemove::Keep => !hit,
+                    KeepOrRemove::Remove => hit,
+                }
+            }
+        }
+        false
     }
 }
