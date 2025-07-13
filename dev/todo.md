@@ -49,3 +49,16 @@
 - umi dedup per gene (not reference!)
 - umi dedup per (start, stop)?
 - test case for umi-n-filter
+
+
+- starsolo test case that shows you need                
+    {"mode": "NInUMI", "action": "remove"},
+    {"mode": "PolyAUMI", "action": "remove"}, #what are you doing STAR?
+
+
+- I'm not happy with the configuration. singlecell output should'nt be in dedup,
+dedup + umi should be one...
+
+- compressed output (gzip/zstd)
+
+- zstd compressed gtfs

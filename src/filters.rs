@@ -48,6 +48,7 @@ pub enum Filter {
     #[serde(alias = "multimapper")]
     MultiMapper(MultiMapper),
     #[serde(alias = "non_primary")]
+    #[serde(alias = "secondary")]
     NonPrimary(NonPrimary),
 
     #[serde(alias = "read1")]
@@ -65,14 +66,14 @@ pub enum Filter {
     #[serde(alias = "NInUMI")]
     NInUmi(NInUmi),
 
-    #[serde(alias = "polyx_umi")]
-    #[serde(alias = "PolyXUMI")]
-    PolyXUmi(PolyXUmi),
+    #[serde(alias = "umi_homopolymer")]
+    #[serde(alias = "UmiHomopolymer")]
+    UmiHomopolymer(UmiHomopolymer),
 
 
-    #[serde(alias = "polya_umi")]
-    #[serde(alias = "PolyAUMI")]
-    PolyAUmi(PolyAUmi),
+    #[serde(alias = "umi_all_a")]
+    #[serde(alias = "UMIAllA")]
+    UmiAllA(UmiAllA),
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -225,11 +226,11 @@ impl ReadFilter for NInUmi {
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
-pub struct PolyXUmi {
+pub struct UmiHomopolymer {
     pub action: KeepOrRemove,
 }
 
-impl ReadFilter for PolyXUmi {
+impl ReadFilter for UmiHomopolymer {
     fn remove_read_after_annotation(
         &self,
         _read: &rust_htslib::bam::record::Record,
@@ -253,11 +254,11 @@ impl ReadFilter for PolyXUmi {
     }
 }
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
-pub struct PolyAUmi {
+pub struct UmiAllA {
     pub action: KeepOrRemove,
 }
 
-impl ReadFilter for PolyAUmi {
+impl ReadFilter for UmiAllA {
     fn remove_read_after_annotation(
         &self,
         _read: &rust_htslib::bam::record::Record,
