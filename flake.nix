@@ -171,6 +171,10 @@
       };
       devShells.doc = pkgs.mkShell {
         nativeBuildInputs = [pkgs.hugo];
+        shellHook = ''
+          cd docs/
+          hugo serve
+        '';
       };
     });
 }
