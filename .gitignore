@@ -22,3 +22,4 @@ tests/failures
 **/actual/**
 *bam.temp
 **/ignore_*
+tests/generated_by_build.rs

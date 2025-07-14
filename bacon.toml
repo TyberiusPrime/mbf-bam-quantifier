@@ -33,6 +33,7 @@ command = [
     "cargo", "test", "--color", "always",
     "--", "--color", "always", # see https://github.com/Canop/bacon/issues/124
 ]
+watch = ["test_cases"]
 need_stdout = true
 
 [jobs.doc]
