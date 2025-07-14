@@ -14,6 +14,18 @@ weight: 25
 Filter reads that have all 'A' bases in their UMI.
 
 
-(This is what STARsolo does, for reasons unknown).
+## Why is this here?
+This is what STARsolo (2.7.11b) does. 
+
+Mistakenly.
+
+The doc and code suggests STAR should filter all homopolymers 
+but there's a bug where the UMI length is not read correctly from 
+`--soloUMIposition`, and that makes all homopolymer checks but A always fail, 
+except if your UMI [length happens to be 10, or you're setting `--soloUMIlen` in addition](https://github.com/alexdobin/STAR/issues/1909#issuecomment-1648204555).
+
+(It's claimed to be fixed in STAR 2.7.11a, but I've observed it even later).
+
+You probably do not want to use this in production., but [UMI holopolymer](../umihomopolymer) instead.
 
 

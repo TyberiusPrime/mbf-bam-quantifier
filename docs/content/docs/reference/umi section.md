@@ -6,9 +6,9 @@ weight: 100
 
 ```toml
 [umi]
-    grouping = 'unique' # When to consider UMIs duplicates. see belowe
+    grouping = 'unique' # When to consider UMIs duplicates. see Below
     bucket = 'PerPosition', # What reads to consider when grouping UMIs. see below
-    mode = # An Extractor. See Extractors in the navigation
+    extract = ... # An Extractor. See Extractors in the navigation
 ```
 
 
@@ -18,7 +18,7 @@ What makes a UMI a duplicate?
 
 Default is `unique`, which means every UMI is counted (once).
 
-Todo: Umi-tools like options.
+TODO: Umi-tools like options. StarSolo has 1MM_all, 1MM_Directional, 1MM_Directional_UMItools
 
 ## Bucket
 
