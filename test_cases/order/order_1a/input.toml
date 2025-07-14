@@ -33,4 +33,4 @@ bucket = "PerReference"
 
 [output]
 directory = "output"
-write_annotated_bam=true
+write_annotated_bam=false

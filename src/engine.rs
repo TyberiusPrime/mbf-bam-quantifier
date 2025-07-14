@@ -193,7 +193,7 @@ pub enum CounterPerChunk {
     },
     SingleCell {
         stat_counter: HashMap<String, usize>,
-        counter: HashMap<(string_interner::symbol::SymbolU32, Vec<u8>), usize>,
+        counter: BTreeMap<(string_interner::symbol::SymbolU32, Vec<u8>), usize>,
     },
 }
 
@@ -391,7 +391,7 @@ impl Output {
                 stat_counter: HashMap::new(),
             },
             Output::SingleCell { .. } => CounterPerChunk::SingleCell {
-                counter: HashMap::new(),
+                counter: BTreeMap::new(),
                 stat_counter: HashMap::new(),
             },
         }
