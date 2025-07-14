@@ -6,7 +6,7 @@ type: docs
 # mbf-bam-quantifier
 
 {{< columns >}}
-Fast, reliable, flexible region based quantification.
+Fast, reliable and flexible region based quantification.
 
 <--->
 
@@ -15,9 +15,9 @@ Count reads just like *you* want.
 
 {{< /columns >}}
 
-Takes a BAM file, a region definition and counts the reads.
+Take a BAM file, a region definition and counts the reads.
 
-Optional unique-molecular-identifier (UMI) based deduplication
+Optional unique-molecular-identifier (UMI) based de-duplication
 and cell barcode based quantification.
 
 ## Example 
@@ -28,35 +28,33 @@ and cell barcode based quantification.
 
 [input.source]
     mode = 'gtf'
-    filename = 'Homo_sapiens.GRCh38.114.chr.gtf.gz'
+    filename = 'Homo_sapiens.GRCh38.114.chr.gtf.gz' # e.g. from ensembl
     feature = exon
     id_attribute = 'gene_id'
-    aggr_id_attribute = 'gene_id'
 
-[umi] # where do the umis come from. 
+[umi] 
     # If set, trigger UMI deduplication,
-    mode = 'tag'
-    tag = 'UR'
+    # How do we group umis
     grouping = 'unique'
     bucket = 'PerPosition'
+
+    # where do they come from?
+    extract = {mode = 'tag', tag = 'UR'}
 
 [cell_barcodes]
     # if set, trigger single cell output
 	extract = {mode = "Tag", tag = "CB"} 
-    separator_char = '_'
 	max_hamming = 0
-    whitelist_files = [
-		'barcodes_1.txt',
-		'barcodes_2.txt',
-		'barcodes_3.txt',
-	]
 
-[[filter]] # a list of filters
+    separator_char = '_'
+    whitelist_files = [ 'barcodes_1.txt', 'barcodes_2.txt', ]
+
+[[filter]] # zero or more filters to the reads.
     mode = 'secondary'
     action = 'remove' # i.e. keep only primary alignments
 
 [strategy]
-    direction = 'forward'  # the default
+    direction = 'forward'  # only reads matching the gtf direction.
 
 
 [output]
@@ -64,7 +62,7 @@ and cell barcode based quantification.
     write_annotated_bam = false 
 ```
 
-Run ```mbf-bam-quantifier input.toml```, receive a MTX formated file and statistics, and
+Run ```mbf-bam-quantifier input.toml```, receive a MTX formatted file and statistics, and
 an optional annatoted BAM.
 
 

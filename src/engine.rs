@@ -127,7 +127,7 @@ pub fn build_trees_from_gtf_merged(
 #[derive(Debug)]
 pub enum AnnotatedRead {
     Filtered,
-    //FilteredInQuant, might want to do tthis for strategy.multi_region hits?
+    //FilteredInQuant, might want to do this for strategy.multi_region hits?
     NotInRegion,
     Counted(Box<AnnotatedReadInfo>), // otherwise this is as large as AnnotatedReadInfo for each
     // entry.

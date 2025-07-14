@@ -62,3 +62,13 @@ dedup + umi should be one...
 - compressed output (gzip/zstd)
 
 - zstd compressed gtfs
+
+- is the id_attribute aggr_id_attribute split sensible? add explanation 
+  I think there's a bug lurking here if multi-region and id=attr_id, we're not splitting at the right position?
+  And id != attr_id actually fails (no test case...)
+  Add test case, rework setting
+
+
+- the genes hit storage doesn't belong on the reads,
+  but on the umi-dedup bucket! 
+
