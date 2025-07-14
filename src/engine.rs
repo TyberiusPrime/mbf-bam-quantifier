@@ -233,7 +233,7 @@ impl CounterPerChunk {
                         AnnotatedRead::NoBarcode => "no_barcode",
 
                         AnnotatedRead::NoUMI => "no_umi",
-                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_whitelist",
+                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_allowlist",
                     };
                     if count_as != "overfetch" {
                         //todo: preinsert values
@@ -276,7 +276,7 @@ impl CounterPerChunk {
                         AnnotatedRead::NoBarcode => "no_barcode",
 
                         AnnotatedRead::NoUMI => "no_umi",
-                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_whitelist",
+                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_allowlist",
                     };
                     if count_as != "overfetch" {
                         //todo: preinsert values
@@ -323,7 +323,7 @@ impl Output {
             ("duplicate", 0),
             ("no_barcode", 0),
             ("no_umi", 0),
-            ("barcode_not_in_whitelist", 0),
+            ("barcode_not_in_allowlist", 0),
             ("filtered", 0),
         ]
         .into_iter()
@@ -367,7 +367,7 @@ impl Output {
             ("duplicate", 0),
             ("no_barcode", 0),
             ("no_umi", 0),
-            ("barcode_not_in_whitelist", 0),
+            ("barcode_not_in_allowlist", 0),
             ("filtered", 0),
         ]
         .into_iter()

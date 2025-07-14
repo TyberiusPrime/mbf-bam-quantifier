@@ -1,6 +1,6 @@
 stat	count
 ambiguous	221
-barcode_not_in_whitelist	0
+barcode_not_in_allowlist	0
 correct	4429
 duplicate	260
 filtered	906

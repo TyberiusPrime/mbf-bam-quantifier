@@ -50,26 +50,26 @@ pub struct CellBarcodes {
     #[serde(default)]
     max_hamming: u16,
     #[serde(default)]
-    whitelist_files: Vec<PathBuf>,
+    allowlist_files: Vec<PathBuf>,
 
     #[serde(skip)]
-    whitelists: Vec<Whitelist>,
+    allowlists: Vec<Whitelist>,
 }
 
 impl CellBarcodes {
     pub fn init(&mut self) -> Result<()> {
         let wl: Result<_> = self
-            .whitelist_files
+            .allowlist_files
             .iter()
             .map(|file| {
                 Ok(std::fs::read_to_string(file)
-                    .with_context(|| format!("Failed to read whitelist file: {:?}", file))?
+                    .with_context(|| format!("Failed to read allowlist file: {:?}", file))?
                     .lines()
                     .map(|line| line.trim().as_bytes().to_vec())
                     .collect::<HashSet<_>>())
             })
             .collect();
-        self.whitelists = wl?;
+        self.allowlists = wl?;
         Ok(())
     }
 
@@ -83,7 +83,7 @@ impl CellBarcodes {
 
     pub fn correct(&self, barcode: &[u8]) -> Option<Vec<u8>> {
         // possibly microopt: use cow...
-        if self.whitelists.is_empty() {
+        if self.allowlists.is_empty() {
             if barcode.is_empty() {
                 return None;
             } else {
@@ -92,14 +92,14 @@ impl CellBarcodes {
         }
         let parts = barcode.split(|&b| b == self.separator_char);
         let mut out = Vec::new();
-        for (part, whitelist) in parts.zip(self.whitelists.iter()) {
-            if whitelist.contains(part) {
+        for (part, allowlist) in parts.zip(self.allowlists.iter()) {
+            if allowlist.contains(part) {
                 if !out.is_empty() {
                     out.push(self.separator_char);
                 }
                 out.extend(part);
             } else {
-                match self.find_closest_by_hamming(part, whitelist) {
+                match self.find_closest_by_hamming(part, allowlist) {
                     Some(corrected) => {
                         if !out.is_empty() {
                             out.push(self.separator_char);
@@ -116,13 +116,13 @@ impl CellBarcodes {
     fn find_closest_by_hamming<'a>(
         &self,
         part: &[u8],
-        whitelist: &'a Whitelist,
+        allowlist: &'a Whitelist,
     ) -> Option<&'a [u8]> {
         use bio::alignment::distance::hamming;
         if self.max_hamming == 0 {
             return None; // No correction allowed
         }
-        whitelist
+        allowlist
             .iter()
             .find(|&entry| hamming(entry, part) <= self.max_hamming as u64)
             .map(|v| v.as_slice())
