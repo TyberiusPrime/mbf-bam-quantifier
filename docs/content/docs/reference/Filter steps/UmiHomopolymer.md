@@ -9,7 +9,7 @@ title: UMI homopolymer
 ```toml
 [[filter]]
     mode = 'umi_homopolymer'
-    action = 'remove|keep'
+    action = 'remove|keep_only' # see 'Filter steps' for details
 ```
 
 Filter reads that consist only of one base. E.g. 'AAAAA', 'TTTTT', 'GGGGG', 'CCCCC'.

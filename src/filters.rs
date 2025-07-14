@@ -7,8 +7,8 @@ use enum_dispatch::enum_dispatch;
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub enum KeepOrRemove {
-    #[serde(alias = "keep")]
-    Keep,
+    #[serde(alias = "keep_only")]
+    KeepOnly,
     #[serde(alias = "remove")]
     Remove,
 }
@@ -86,7 +86,7 @@ impl ReadFilter for MultiMapper {
         let alignment_count = read.no_of_alignments();
         let hit = alignment_count > 1;
         match self.action {
-            KeepOrRemove::Keep => !hit,
+            KeepOrRemove::KeepOnly => !hit,
             KeepOrRemove::Remove => hit,
         }
     }
@@ -146,7 +146,7 @@ impl ReadFilter for Spliced {
             .skip(1)
             .any(|c| matches!(c, rust_htslib::bam::record::Cigar::RefSkip(_)));
         match self.action {
-            KeepOrRemove::Keep => !hit,
+            KeepOrRemove::KeepOnly => !hit,
             KeepOrRemove::Remove => hit,
         }
     }
@@ -216,7 +216,7 @@ impl ReadFilter for NInUmi {
             let hit = umi.iter().any(|x| *x == b'N');
 
             match self.action {
-                KeepOrRemove::Keep => !hit,
+                KeepOrRemove::KeepOnly => !hit,
                 KeepOrRemove::Remove => hit,
             }
         } else {
@@ -245,7 +245,7 @@ impl ReadFilter for UmiHomopolymer {
             if let Some(first) = umi.first() {
                 let hit = it.all(|&x| x == *first);
                 return match self.action {
-                    KeepOrRemove::Keep => !hit,
+                    KeepOrRemove::KeepOnly => !hit,
                     KeepOrRemove::Remove => hit,
                 };
             }
@@ -272,7 +272,7 @@ impl ReadFilter for UmiAllA {
             let mut it = umi.iter();
             let hit = it.all(|&x| x == b'A');
             return match self.action {
-                KeepOrRemove::Keep => !hit,
+                KeepOrRemove::KeepOnly => !hit,
                 KeepOrRemove::Remove => hit,
             };
         }

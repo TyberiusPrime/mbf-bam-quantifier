@@ -864,7 +864,7 @@ impl Engine {
             for f in self.filters.iter() {
                 if let crate::filters::Filter::Reference(reference_filter) = f {
                     match reference_filter.action {
-                        crate::filters::KeepOrRemove::Keep => {
+                        crate::filters::KeepOrRemove::KeepOnly => {
                             chunks.retain(|c| reference_filter.references.contains(&c.chr));
                         }
                         crate::filters::KeepOrRemove::Remove => {

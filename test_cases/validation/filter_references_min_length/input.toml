@@ -6,7 +6,7 @@
 [[filter]]
    mode = "reference"
    references = []
-   action ='keep'
+   action ='keep_only'
 
 
 

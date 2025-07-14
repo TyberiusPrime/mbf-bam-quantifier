@@ -7,7 +7,7 @@ weight: 12
 ```toml
 [[filter]]
     mode = 'secondary'
-    action = 'remove|keep'
+    action = 'remove|keep_only' # see 'Filter steps' for details
 ```
 
 

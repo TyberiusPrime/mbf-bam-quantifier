@@ -8,7 +8,7 @@ weight: 25
 ```toml
 [[filter]]
     mode = 'umi_all_a'
-    action = 'remove|keep'
+    action = 'remove|keep_only' # see 'Filter steps' for details
 ```
 
 Filter reads that have all 'A' bases in their UMI.

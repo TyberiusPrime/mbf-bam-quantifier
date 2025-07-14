@@ -9,9 +9,9 @@ title: N in UMI
 ```toml
 [[filter]]
     mode = 'n_in_umi'
-    action = 'remove|keep'
+    action = 'remove|keep_only' # see 'Filter steps' for details
 ```
 
-Filter reads that have one or more 'N' bases in their UMI
+Filter reads that have one or more 'N' bases in their UMI.
 
 
