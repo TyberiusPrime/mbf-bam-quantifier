@@ -216,7 +216,7 @@ pub struct Output {
 pub struct UmiConfig {
     #[serde(alias = "extract")]
     pub extractor: Extractor,
-    pub mode: DeduplicationMode,
+    pub strategy: DeduplicationMode,
     pub bucket: DeduplicationBucket,
 }
 

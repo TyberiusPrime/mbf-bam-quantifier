@@ -223,6 +223,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234113d19d0d7d613b40e86fb654acf958910802bcceab913a4f9e7cda03b1a4"
 dependencies = [
  "memchr",
+ "regex-automata",
  "serde",
 ]
 
@@ -1090,6 +1091,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bio",
+ "bstr",
  "csv",
  "enum_dispatch",
  "env_logger",
@@ -1107,6 +1109,7 @@ dependencies = [
  "nom 8.0.0",
  "noodles-gff",
  "noodles-gtf",
+ "petgraph",
  "rand 0.9.1",
  "rayon",
  "regex",

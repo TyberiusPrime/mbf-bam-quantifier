@@ -10,7 +10,7 @@
    aggr_id_attribute = 'gene_id'
 
 [umi]
-	mode = "unique"
+	strategy.kind = "unique"
 	bucket = "PerPosition"
 
 [umi.extract]

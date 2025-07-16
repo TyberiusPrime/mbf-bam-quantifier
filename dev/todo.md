@@ -77,7 +77,7 @@ dedup + umi should be one...
 
 umi dedup methods
 - [x] unique
-- [ ] percentile
+- [x] percentile
 - [ ] cluster, 
 - [ ] adjacency 
 - [ ] directional,

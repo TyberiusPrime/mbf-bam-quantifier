@@ -9,7 +9,7 @@ should = sys.argv[1]
 actual = sys.argv[2]
 
 # but teh actual should is the sam...
-should = Path(should).parent.parent / "input_single_perc_py3.sam"
+should = Path(should).parent.parent / "input_single_cluster_py3.sam"
 import pysam
 
 
@@ -28,14 +28,10 @@ for x in should_f.fetch(until_eof=True):
 
 actual_f = pysam.Samfile(actual)
 actual_umis_per_pos = collections.Counter()
-percentile_dup = 0
 for x in actual_f.fetch(until_eof=True):
     if not x.has_tag("XF"):
         # the other sam values are already -1 from pysam...
         actual_umis_per_pos[x.reference_name, x.get_tag("XP") - 1] += 1
-    else:
-        if x.get_tag('XF') == 7:
-            percentile_dup += 1
 
 print('should', sum(should_umis_per_pos.values()))
 print('actual', sum(actual_umis_per_pos.values()))
@@ -46,5 +42,3 @@ print(sorted(set(actual_umis_per_pos.keys()).difference(should_umis_per_pos.keys
 assert sum(actual_umis_per_pos.values()) == sum(should_umis_per_pos.values())
 
 assert actual_umis_per_pos == should_umis_per_pos
-
-assert percentile_dup == 30

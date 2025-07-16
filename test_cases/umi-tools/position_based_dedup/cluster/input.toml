@@ -10,7 +10,8 @@
 
 [umi]
 	bucket ='PerPosition'
-	strategy.kind = "percentile"
+	strategy.kind = "cluster"
+	strategy.max_distance = 1
 
 [umi.extract]
     mode = "SearchInName"

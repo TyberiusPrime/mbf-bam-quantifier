@@ -43,6 +43,8 @@ env_logger = "0.11.8"
 twoway = "0.2.2"
 log = "0.4.27"
 medians = "3.0.12"
+petgraph = "0.8.2"
+bstr = "1.12.0"
 
 [dev-dependencies]
 walkdir = "2.5.0"

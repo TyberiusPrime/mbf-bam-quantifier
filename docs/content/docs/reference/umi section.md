@@ -6,7 +6,8 @@ weight: 100
 
 ```toml
 [umi]
-    grouping = 'unique' # When to consider UMIs duplicates. see Below
+    strategy.kind = 'cluster' # When to consider UMIs duplicates. see Below
+    strategy.max_distance = 1
     bucket = 'PerPosition', # What reads to consider when grouping UMIs. see below
     extract = ... # An Extractor. See Extractors in the navigation
 ```

@@ -15,7 +15,7 @@ regex = "barcode=([AGCT-]*)"
 
 [umi]
 extract = { mode = "RegexName", regex = "umi=([AGCT-]*)"}
-mode = "unique"
+strategy.kind = "unique"
 bucket = "PerReference"
 
 [strategy]

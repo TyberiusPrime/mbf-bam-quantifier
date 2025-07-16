@@ -12,7 +12,7 @@
 
 [umi]
 	extract = { mode = 'Tag', tag = 'UB'}
-	mode = "unique"
+	strategy.kind = "unique"
     bucket = 'PerReference'
 
 [strategy]

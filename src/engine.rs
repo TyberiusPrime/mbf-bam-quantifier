@@ -1,3 +1,4 @@
+use bstr::BString;
 use ex::Wrapper;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -164,8 +165,8 @@ pub struct AnnotatedReadInfo {
     pub corrected_position: i32, // clipping corrected position. Samspec is limited to 0..2^31-1,
     // so i32 is safe, and it allows us to have negative corrected positions
     pub hits: Hits,
-    pub umi: Option<Vec<u8>>,     // Optional: What's it's UMI. 24 bytes
-    pub barcode: Option<Vec<u8>>, // Optional: What's it's cell-barcode 24 bytes
+    pub umi: Option<BString>,     // Optional: What's it's UMI. 24 bytes
+    pub barcode: Option<BString>, // Optional: What's it's cell-barcode 24 bytes
     pub mapping_priority: (u8, u8),
     pub reverse: bool,
 }
@@ -274,7 +275,7 @@ impl CounterPerChunk {
                             let hits = &info.hits;
                             for gene in &hits.correct {
                                 counter
-                                    .entry((*gene, barcode.clone()))
+                                    .entry((*gene, barcode.to_vec().into()))
                                     .and_modify(|e| *e += 1)
                                     .or_insert(1);
                             }
@@ -1086,7 +1087,7 @@ impl Engine {
         let dedup_mode = self
             .umi_config
             .as_ref()
-            .map(|x| x.mode)
+            .map(|x| x.strategy)
             .unwrap_or(crate::deduplication::DeduplicationMode::NoDedup);
 
         for (block, dedup_storage) in [
@@ -1214,7 +1215,7 @@ impl Engine {
                 }
             }
 
-            let barcode = {
+            let barcode: Option<BString> = {
                 match self.cell_barcode.as_ref() {
                     Some(cb) => {
                         let bc = cb.extract(read).context("barcode extraction failed")?; // an error
@@ -1223,7 +1224,7 @@ impl Engine {
                                 // if we have a barcode, correct it
                                 let corrected_barcode = cb.correct(&uncorrected);
                                 match corrected_barcode {
-                                    Some(bc) => Some(bc),
+                                    Some(bc) => Some(bc.into()),
                                     None => {
                                         res.push((
                                             AnnotatedRead::BarcodeNotInWhitelist(
@@ -1246,10 +1247,10 @@ impl Engine {
                     None => None,
                 }
             };
-            let umi: Option<Vec<u8>> = {
+            let umi: Option<BString> = {
                 match self.umi_config.as_ref() {
                     Some(x) => match x.extractor.extract(read)? {
-                        Some(umi) => Some(umi),
+                        Some(umi) => Some(umi.into()),
                         None => {
                             res.push((AnnotatedRead::NoUMI, *org_index));
                             *org_index += 1;

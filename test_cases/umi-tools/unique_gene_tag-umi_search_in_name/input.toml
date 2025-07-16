@@ -4,7 +4,7 @@
     source.tag = 'XF'
 
 [umi]
-	mode ="unique"
+	strategy.kind = "unique"
 	bucket = "PerPosition"
 
 [umi.extract]

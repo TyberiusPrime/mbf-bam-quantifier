@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use bstr::BString;
 use std::collections::HashSet;
 use string_interner::symbol::SymbolU32;
 
@@ -31,8 +32,8 @@ pub trait ReadFilter: Send + Sync {
     fn remove_read_after_annotation(
         &self,
         _read: &rust_htslib::bam::record::Record,
-        _barcode: Option<&Vec<u8>>,
-        _umi: Option<&Vec<u8>>,
+        _barcode: Option<&BString>,
+        _umi: Option<&BString>,
         _genes_hit_correct: &Vec<SymbolU32>,
         _genes_hit_reverse: &Vec<SymbolU32>,
         _interner: &crate::engine::OurInterner,
@@ -206,8 +207,8 @@ impl ReadFilter for NInUmi {
     fn remove_read_after_annotation(
         &self,
         _read: &rust_htslib::bam::record::Record,
-        _barcode: Option<&Vec<u8>>,
-        umi: Option<&Vec<u8>>,
+        _barcode: Option<&BString>,
+        umi: Option<&BString>,
         _genes_hit_correct: &Vec<SymbolU32>,
         _genes_hit_reverse: &Vec<SymbolU32>,
         _interner: &crate::engine::OurInterner,
@@ -234,8 +235,8 @@ impl ReadFilter for UmiHomopolymer {
     fn remove_read_after_annotation(
         &self,
         _read: &rust_htslib::bam::record::Record,
-        _barcode: Option<&Vec<u8>>,
-        umi: Option<&Vec<u8>>,
+        _barcode: Option<&BString>,
+        umi: Option<&BString>,
         _genes_hit_correct: &Vec<SymbolU32>,
         _genes_hit_reverse: &Vec<SymbolU32>,
         _interner: &crate::engine::OurInterner,
@@ -262,8 +263,8 @@ impl ReadFilter for UmiAllA {
     fn remove_read_after_annotation(
         &self,
         _read: &rust_htslib::bam::record::Record,
-        _barcode: Option<&Vec<u8>>,
-        umi: Option<&Vec<u8>>,
+        _barcode: Option<&BString>,
+        umi: Option<&BString>,
         _genes_hit_correct: &Vec<SymbolU32>,
         _genes_hit_reverse: &Vec<SymbolU32>,
         _interner: &crate::engine::OurInterner,

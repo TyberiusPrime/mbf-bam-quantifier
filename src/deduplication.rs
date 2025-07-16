@@ -1,4 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use bstr::BString;
+use petgraph::graph::Graph;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use rust_htslib::bam;
 
@@ -13,7 +15,15 @@ pub enum DeduplicationBucket {
     PerReference,
 }
 
+#[derive(serde::Deserialize, Debug, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub struct HammingDistance {
+    #[serde(alias = "max_hamming")]
+    max_distance: u64,
+}
+
 #[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, Copy)]
+#[serde(tag = "kind")]
 pub enum DeduplicationMode {
     #[serde(alias = "none")]
     NoDedup,
@@ -23,6 +33,9 @@ pub enum DeduplicationMode {
 
     #[serde(alias = "percentile")]
     Percentile,
+
+    #[serde(alias = "cluster")]
+    Cluster(HammingDistance),
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -46,6 +59,7 @@ impl PartialOrd for MappingQuality {
     }
 }
 
+#[derive(Debug)]
 pub struct UmiGroupInfo {
     best_read_index: usize,
     best_mapping_quality: MappingQuality,
@@ -54,8 +68,8 @@ pub struct UmiGroupInfo {
 
 pub enum DedupPerBucket {
     None,
-    Umi(HashMap<Vec<u8>, UmiGroupInfo>),
-    SingleCell(HashMap<Vec<u8>, HashMap<Vec<u8>, UmiGroupInfo>>),
+    Umi(HashMap<BString, UmiGroupInfo>),
+    SingleCell(HashMap<BString, HashMap<BString, UmiGroupInfo>>),
 }
 
 pub enum AcceptReadResult {
@@ -75,10 +89,10 @@ impl DedupPerBucket {
     }
 
     pub fn accept_read_inner(
-        map: &mut HashMap<Vec<u8>, UmiGroupInfo>,
+        map: &mut HashMap<BString, UmiGroupInfo>,
         this_index: usize,
         read: &bam::record::Record,
-        umi: &Vec<u8>,
+        umi: &BString,
     ) -> AcceptReadResult {
         let hit = map.get_mut(umi);
         let this_mq = MappingQuality {
@@ -103,7 +117,7 @@ impl DedupPerBucket {
             }
             None => {
                 map.insert(
-                    umi.to_vec(),
+                    umi.clone(),
                     UmiGroupInfo {
                         best_read_index: this_index,
                         best_mapping_quality: this_mq,
@@ -119,8 +133,8 @@ impl DedupPerBucket {
         &mut self,
         read: &bam::record::Record,
         this_index: usize,
-        umi: Option<&Vec<u8>>,
-        barcode: Option<&Vec<u8>>,
+        umi: Option<&BString>,
+        barcode: Option<&BString>,
     ) -> AcceptReadResult {
         match self {
             DedupPerBucket::None => AcceptReadResult::New,
@@ -135,7 +149,7 @@ impl DedupPerBucket {
                     .expect("Barcode should be extracted before deduplication")
                     .as_slice();
 
-                let by_barcode = map.entry(barcode.to_vec());
+                let by_barcode = map.entry(barcode.into());
                 let by_barcode = match by_barcode {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(e) => e.insert(HashMap::new()),
@@ -170,61 +184,159 @@ impl DedupPerBucket {
 
     fn finish_umi_subbucket(
         mode: DeduplicationMode,
-        map: &HashMap<Vec<u8>, UmiGroupInfo>,
+        map: &HashMap<BString, UmiGroupInfo>,
         reads: &mut Vec<(engine::AnnotatedRead, usize)>,
     ) {
         match mode {
             DeduplicationMode::NoDedup => {}
             DeduplicationMode::Unique => {}
             DeduplicationMode::Percentile => {
-                //UMI. UMIs with counts < 1% of the median counts for UMIs at the same position are ignored.
-                const _: () = assert!(
-                    std::mem::size_of::<usize>() == 8,
-                    "usize isn't u64, this needs adjusting"
-                );
-                let mut counts: Vec<u64> = map
-                    .values()
-                    .map(
-                        |v| v.count as u64, //if usize > u64
-                        //the const assert above should have exploded
-                    )
-                    .collect();
-                if counts.len() == 1 {
-                    return
-                }
-                let medians =
-                    medians::medianu64(&mut counts[..]).unwrap_or(medians::Medians::Odd(&0));
-                let median = match medians {
-                    medians::Medians::Odd(m) => *m,
-                    medians::Medians::Even((m1, m2)) => (m1 + m2) / 2,
-                };
+                let filter = dedup_percentile(map);
+                filter_reads_with_those_umis(reads, filter)
+            }
+            DeduplicationMode::Cluster(max_hamming) => {
+                let filter = dedup_cluster(map, max_hamming.max_distance);
+                filter_reads_with_those_umis(reads, filter)
+            }
+        }
+    }
+}
 
-                let threshold = median / 100; //rounds towards 0, so should be fine.
-                if counts.iter().any(|x| *x > 1) {
-                    dbg!(&counts);
-                    dbg!(median);
-                    dbg!(&threshold);
-                }
-                let filter: HashSet<_> = map
-                    .iter()
-                    .filter(|(_k, v)| (v.count as u64) <= threshold)
-                    .map(|(k, _v)| k)
-                    .collect();
-                for (read, _org_index) in reads.iter_mut() {
-                    match read {
-                        engine::AnnotatedRead::Counted(info) => {
-                            if let Some(umi) = info.umi.as_ref() {
-                                if filter.contains(umi) {
-                                    *read = engine::AnnotatedRead::new_approximate_duplicate(
-                                        info.corrected_position,
-                                    );
-                                }
-                            }
-                        }
-                        _ => {}
+fn filter_reads_with_those_umis(
+    reads: &mut Vec<(engine::AnnotatedRead, usize)>,
+    filter: HashSet<&BString>,
+) {
+    for (read, _org_index) in reads.iter_mut() {
+        match read {
+            engine::AnnotatedRead::Counted(info) => {
+                if let Some(umi) = info.umi.as_ref() {
+                    if filter.contains(umi) {
+                        *read = engine::AnnotatedRead::new_approximate_duplicate(
+                            info.corrected_position,
+                        );
                     }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn dedup_percentile(map: &HashMap<BString, UmiGroupInfo>) -> HashSet<&BString> {
+    {
+        //UMI. UMIs with counts < 1% of the median counts for UMIs at the same position are ignored.
+        const _: () = assert!(
+            std::mem::size_of::<usize>() == 8,
+            "usize isn't u64, this needs adjusting"
+        );
+        let mut counts: Vec<u64> = map
+            .values()
+            .map(
+                |v| v.count as u64, //if usize > u64
+                                    //the const assert above should have exploded
+            )
+            .collect();
+        if counts.len() == 1 {
+            return HashSet::new();
+        }
+        let medians = medians::medianu64(&mut counts[..]).unwrap_or(medians::Medians::Odd(&0));
+        let median = match medians {
+            medians::Medians::Odd(m) => *m,
+            medians::Medians::Even((m1, m2)) => (m1 + m2) / 2,
+        };
+
+        let threshold = median / 100; //rounds towards 0, so should be fine.
+        if counts.iter().any(|x| *x > 1) {
+            dbg!(&counts);
+            dbg!(median);
+            dbg!(&threshold);
+        }
+        let filter: HashSet<_> = map
+            .iter()
+            .filter(|(_k, v)| (v.count as u64) <= threshold)
+            .map(|(k, _v)| k)
+            .collect();
+        filter
+    }
+}
+
+fn dedup_cluster(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> HashSet<&BString> {
+    use petgraph::graph::UnGraph;
+    //create a undirected graph with edges where the hamming distance is leq than max_hamming
+    //then find connected components
+    //
+    let mut graph = UnGraph::<&BString, u64>::new_undirected();
+    let mut nodes = HashMap::new();
+    for (umi, _info) in map.iter() {
+        let node_index = graph.add_node(umi);
+        nodes.insert(umi, node_index);
+    }
+    for (umi1, umi2) in map.keys().flat_map(|umi1| {
+        map.keys()
+            .filter(move |umi2| umi1 < *umi2)
+            .map(move |umi2| (umi1, umi2))
+    }) {
+        let dist = bio::alignment::distance::hamming(umi1, umi2);
+        if dist <= max_hamming {
+            let node1 = nodes.get(umi1).expect("UMI should be in the graph");
+            let node2 = nodes.get(umi2).expect("UMI should be in the graph");
+            graph.add_edge(*node1, *node2, dist);
+        }
+    }
+    let mut filter = HashSet::new();
+    let connected_components = connected_components_values(&graph);
+    for group in connected_components.iter() {
+        if group.len() > 1 {
+            //find the one with the highest count...
+            let max_umi = group
+                .iter()
+                .max_by_key(|&&umi| {
+                    map.get(umi).map_or(0, |info| info.count as u64) //if umi not in map, count is 0
+                })
+                .expect("There should be at least one UMI in the group");
+            //and add all others to our filter set
+            for umi in group.iter() {
+                if umi != max_umi {
+                    filter.insert(*umi);
                 }
             }
         }
     }
+    /* dbg!(&map);
+    dbg!(&connected_components);
+    dbg!(&filter); */
+    filter
+
+}
+
+/// Returns a vector of components, each as a Vec<N> of node values.
+pub fn connected_components_values<N: Clone, E>(
+    graph: &Graph<N, E, petgraph::Undirected>,
+) -> Vec<Vec<N>> {
+    let mut visited = HashSet::new();
+    let mut components = Vec::new();
+
+    for start in graph.node_indices() {
+        if visited.contains(&start) {
+            continue;
+        }
+
+        let mut component = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(start);
+        visited.insert(start);
+
+        while let Some(node) = queue.pop_front() {
+            component.push(graph[node].clone());
+            for neighbor in graph.neighbors(node) {
+                if visited.insert(neighbor) {
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        components.push(component);
+    }
+
+    components
 }

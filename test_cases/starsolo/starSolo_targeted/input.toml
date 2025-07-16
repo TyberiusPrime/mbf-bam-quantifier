@@ -24,7 +24,7 @@
 	]
 [umi]
 	extract = {mode = 'Tag', tag = 'UB'}
-	mode = "unique"
+	strategy.kind = "unique"
 	bucket = "per_position"
 
 # star solo only assigns genes to reads if the match the

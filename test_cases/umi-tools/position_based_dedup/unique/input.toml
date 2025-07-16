@@ -10,7 +10,8 @@
 
 [umi]
 	bucket = 'PerPosition'
-	mode = "unique"
+	strategy.kind = "unique"
+
 [umi.extract]
     mode = "SearchInName"
 	search = "_"
