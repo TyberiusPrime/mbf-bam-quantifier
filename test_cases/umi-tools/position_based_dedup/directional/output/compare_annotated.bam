@@ -1,0 +1,44 @@
+#!/usr/bin/env python
+import pysam
+import collections
+from pathlib import Path
+
+import sys
+
+should = sys.argv[1]
+actual = sys.argv[2]
+
+# but teh actual should is the sam...
+should = Path(should).parent.parent / "input_single_cluster_py3.sam"
+import pysam
+
+
+should_f = pysam.Samfile(should)
+# we don't return the same reads.
+# umi-tools does some random selection on 'equally good', we use deterministically the first one.
+should_umis_per_pos = collections.Counter()
+
+for x in should_f.fetch(until_eof=True):
+    if x.is_reverse:
+        pos = x.pos + x.infer_read_length()
+    else:
+        pos = x.pos
+    should_umis_per_pos[x.reference_name, pos] += 1
+
+
+actual_f = pysam.Samfile(actual)
+actual_umis_per_pos = collections.Counter()
+for x in actual_f.fetch(until_eof=True):
+    if not x.has_tag("XF"):
+        # the other sam values are already -1 from pysam...
+        actual_umis_per_pos[x.reference_name, x.get_tag("XP") - 1] += 1
+
+print('should', sum(should_umis_per_pos.values()))
+print('actual', sum(actual_umis_per_pos.values()))
+print(sorted(set(should_umis_per_pos.keys()).difference(actual_umis_per_pos.keys())))
+print(sorted(set(actual_umis_per_pos.keys()).difference(should_umis_per_pos.keys())))
+
+
+assert sum(actual_umis_per_pos.values()) == sum(should_umis_per_pos.values())
+
+assert actual_umis_per_pos == should_umis_per_pos
