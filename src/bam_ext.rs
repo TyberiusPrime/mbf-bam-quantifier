@@ -30,20 +30,35 @@ impl BamRecordExtensions for bam::Record {
 
     /// correct the position to what it would have if there was on clipping
     /// ie. if they were treated as mismatches
-    /// i32 is ok, sam raneg is 0..2^31-1, and we can have negative corrected positions
+    /// i32 is ok, sam range is 0..2^31-1, and we can have negative corrected positions
     /// if it's aligned to the start
     fn corrected_pos(&self, max_skip_len: u32) -> Option<i32> {
-        let p:i32 = self.pos().try_into().expect("bam pos exceeded i32?");
+        let p: i32 = self.pos().try_into().expect("bam pos exceeded i32?");
         if p < 0 {
+            // not aligned, no corrected position
             None
         } else {
-            //it's always the leading ones... since the seq gets flipped
+            if self.is_reverse() {
+                //add everything up *but* a leading soft clip.
 
-            let skip: i32 = self.cigar().leading_softclips().try_into().expect("softclip exceeded i64");
-            if skip > max_skip_len.try_into().unwrap(){
-                panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?")
+                //I don't think this will lead to problems with max_skip_len.
+                //we always add to the right.
+                //And if the read is beyond the current chunk afterwards,
+                //we filter it - it will be fetched again within the chunk it fits in..
+                Some(self.reference_end().try_into().expect("reference end beyond i32 range"))
+            } else {
+                //it's always the leading ones... since the seq gets flipped
+
+                let skip: i32 = self
+                    .cigar()
+                    .leading_softclips()
+                    .try_into()
+                    .expect("softclip exceeded i64");
+                if skip > max_skip_len.try_into().unwrap() {
+                    panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?")
+                }
+                Some(p.saturating_sub(skip))
             }
-            Some(p.saturating_sub(skip))
         }
     }
     /// try to retrieve the number of mapping coordinates

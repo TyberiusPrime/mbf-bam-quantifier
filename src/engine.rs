@@ -124,6 +124,11 @@ pub fn build_trees_from_gtf_merged(
     Ok(res)
 }
 
+#[derive(Debug, Clone)]
+pub struct DuplicateReadInfo {
+    corrected_position: i32, // clipping corrected position. Samspec is limited to 0..2^31-1,
+}
+
 #[derive(Debug)]
 pub enum AnnotatedRead {
     Filtered,
@@ -131,7 +136,7 @@ pub enum AnnotatedRead {
     NotInRegion,
     Counted(Box<AnnotatedReadInfo>), // otherwise this is as large as AnnotatedReadInfo for each
     // entry.
-    Duplicate,
+    Duplicate(Box<DuplicateReadInfo>),
     NoBarcode,
     NoUMI,
     BarcodeNotInWhitelist(Vec<u8>),
@@ -187,6 +192,7 @@ impl ReadToGeneMatcher {
 }
 
 pub enum CounterPerChunk {
+    NoCount,
     PerRegion {
         counter: HashMap<string_interner::symbol::SymbolU32, (usize, usize)>,
         stat_counter: HashMap<String, usize>,
@@ -200,6 +206,9 @@ pub enum CounterPerChunk {
 impl CounterPerChunk {
     fn count_reads(&mut self, annotated_reads: &Vec<(AnnotatedRead, usize)>) -> Result<()> {
         match self {
+            CounterPerChunk::NoCount => {
+                return Ok(());
+            }
             CounterPerChunk::PerRegion {
                 counter,
                 stat_counter,
@@ -229,7 +238,7 @@ impl CounterPerChunk {
                             //these are 'accidential overfetches'
                             "overfetch"
                         }
-                        AnnotatedRead::Duplicate => "duplicate",
+                        AnnotatedRead::Duplicate(_) => "duplicate",
                         AnnotatedRead::NoBarcode => "no_barcode",
 
                         AnnotatedRead::NoUMI => "no_umi",
@@ -271,7 +280,7 @@ impl CounterPerChunk {
                             "overfetch"
                         }
 
-                        AnnotatedRead::Duplicate => "duplicate",
+                        AnnotatedRead::Duplicate(_) => "duplicate",
 
                         AnnotatedRead::NoBarcode => "no_barcode",
 
@@ -290,6 +299,7 @@ impl CounterPerChunk {
 }
 
 pub enum Output {
+    NoOutput, 
     PerRegion {
         output_filename: PathBuf,
         counter: HashMap<String, (usize, usize)>,
@@ -309,6 +319,12 @@ pub enum Output {
 }
 
 impl Output {
+     pub fn new_no_output(
+    ) -> Self {
+
+        Output::NoOutput
+    }
+
     pub fn new_per_region(
         output_filename: PathBuf,
         first_column_only: bool,
@@ -386,6 +402,8 @@ impl Output {
 
     pub fn per_chunk(&self) -> CounterPerChunk {
         match self {
+            Output::NoOutput => CounterPerChunk::NoCount{
+            },
             Output::PerRegion { .. } => CounterPerChunk::PerRegion {
                 counter: HashMap::new(),
                 stat_counter: HashMap::new(),
@@ -405,6 +423,10 @@ impl Output {
         output_catcher: CounterPerChunk,
     ) -> Result<()> {
         match self {
+            Output::NoOutput => {
+                //no output, no counting
+                return Ok(());
+            }
             Output::PerRegion {
                 counter,
                 stat_counter,
@@ -487,6 +509,10 @@ impl Output {
     fn finish(self, chunk_names: &[String]) -> Result<()> {
         measure_time::info_time!("Preparing final output");
         match self {
+            Output::NoOutput => {
+                //no output, no counting
+                return Ok(());
+            }
             Output::PerRegion {
                 output_filename,
                 counter,
@@ -1271,7 +1297,12 @@ impl Engine {
                 dedup_storage.accept_read(read, res.len(), umi.as_ref(), barcode.as_ref());
             match do_accept {
                 AcceptReadResult::Duplicated => {
-                    res.push((AnnotatedRead::Duplicate, *org_index));
+                    res.push((
+                        AnnotatedRead::Duplicate(Box::new(DuplicateReadInfo {
+                            corrected_position,
+                        })),
+                        *org_index,
+                    ));
                     *org_index += 1;
                 }
                 AcceptReadResult::New => {
@@ -1294,7 +1325,12 @@ impl Engine {
                 }
                 AcceptReadResult::DuplicateButPrefered(idx_to_set_duplicate) => {
                     let (_old, old_org_index) = &res[idx_to_set_duplicate];
-                    res[idx_to_set_duplicate] = (AnnotatedRead::Duplicate, *old_org_index);
+                    res[idx_to_set_duplicate] = (
+                        AnnotatedRead::Duplicate(Box::new(DuplicateReadInfo {
+                            corrected_position,
+                        })),
+                        *old_org_index,
+                    );
 
                     let info = AnnotatedReadInfo {
                         corrected_position: corrected_position,
@@ -1349,7 +1385,7 @@ impl Engine {
             bam_result?;
             if let Some(anno_read) = idx_to_annotated.get_mut(&ii) {
                 //remove old tags
-                for tag in [b"XF", b"XQ", b"XR", b"XP", b"CB"] {
+                for tag in [b"XF", b"XQ", b"XR", b"XP", b"CB", b"RX"] {
                     read.remove_aux(tag).ok();
                 }
                 match anno_read {
@@ -1360,8 +1396,13 @@ impl Engine {
                     /* AnnotatedRead::FilteredInQuant => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(2))?;
                     } */
-                    AnnotatedRead::Duplicate => {
+                    AnnotatedRead::Duplicate(info) => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(3))?;
+                        read.replace_aux(
+                            b"XP",
+                            //convert back into sam's 1 based coordinates.
+                            rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
+                        )?;
                     }
                     AnnotatedRead::BarcodeNotInWhitelist(uncorrected_barcode) => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(4))?;
@@ -1419,6 +1460,14 @@ impl Engine {
                                 b"CB",
                                 rust_htslib::bam::record::Aux::String(
                                     std::str::from_utf8(cell_barcode).expect("barcode wasn't utf8"),
+                                ),
+                            )?;
+                        }
+                        if let Some(umi) = info.umi.as_ref() {
+                            read.replace_aux(
+                                b"RX",
+                                rust_htslib::bam::record::Aux::String(
+                                    std::str::from_utf8(umi).expect("barcode wasn't utf8"),
                                 ),
                             )?;
                         }

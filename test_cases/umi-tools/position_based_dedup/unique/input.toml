@@ -1,0 +1,41 @@
+# we dedup per position.
+# and the output we want to compare with is a sam file
+[input]
+	bam = "input_chr19.bam"
+	correct_reads_for_clipping = true # since this is umi-tools
+
+
+[input.source]
+   mode ="bam_references"
+
+[umi]
+    mode = "SearchInName"
+	search = "_"
+	skip = 0
+	length = 5
+
+# [[filter]]
+# 	mode = "non_primary"
+# 	action = "remove"
+
+# [[filter]]
+# 	mode = "MultiMapper"
+# 	action = "remove"
+
+
+# strategy.direction ='forward' is standard
+
+[dedup]
+	mode = "umi"
+	bucket = 'PerPosition'
+	umi_grouping = "unique"
+
+
+[output]
+	directory = 'output'
+    counts = false
+	write_annotated_bam  = true
+	# counts = false TODO
+
+
+

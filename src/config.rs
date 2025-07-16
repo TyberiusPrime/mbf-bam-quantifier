@@ -196,6 +196,10 @@ pub struct GTFConfig {
     pub duplicate_handling: DuplicateHandling,
 }
 
+fn default_output_counts() -> bool {
+    true 
+}
+
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Output {
@@ -204,6 +208,9 @@ pub struct Output {
     pub write_annotated_bam: bool,
     #[serde(default)]
     pub only_correct: bool,
+
+    #[serde(default="default_output_counts")]
+    pub counts: bool,
 }
 
 impl Config {

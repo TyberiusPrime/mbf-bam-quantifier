@@ -9,6 +9,31 @@ use crate::{
 use anyhow::{Context, Result};
 use rust_htslib::bam::Read;
 
+fn create_output(
+    do_counts: bool,
+    per_cell: bool,
+    output_directory: &std::path::PathBuf,
+    sorted_output_keys: Option<Vec<String>>,
+    header: &str,
+    first_column_only: bool,
+) -> Result<engine::Output> {
+    let output = if do_counts {
+        if per_cell {
+            engine::Output::new_singlecell(output_directory.clone(), sorted_output_keys)?
+        } else {
+            engine::Output::new_per_region(
+                output_directory.join("counts.tsv"),
+                first_column_only,
+                sorted_output_keys,
+                header.to_string(),
+            )
+        }
+    } else {
+        engine::Output::new_no_output()
+    };
+    Ok(output)
+}
+
 pub fn quantify(
     input: &Input,
     filters: Vec<crate::filters::Filter>,
@@ -20,7 +45,10 @@ pub fn quantify(
 ) -> anyhow::Result<()> {
     // Here you would implement the quantification logic
     // For now, we just return Ok to indicate success
-    //
+
+    // for non-cellbased counts, output only 'matching' column?
+    let single_column_counts_only =
+        output.only_correct || matches!(strategy.direction, crate::config::MatchDirection::Ignore);
 
     let our_engine = match input.source {
         crate::config::Source::Gtf(ref gtf_config) => {
@@ -51,18 +79,14 @@ pub fn quantify(
                 keys.sort();
                 keys
             };
-
-            let output = if cell_barcode.is_some() {
-                engine::Output::new_singlecell(output.directory.clone(), Some(sorted_output_keys))?
-            } else {
-                engine::Output::new_per_region(
-                    output.directory.join("counts.tsv"),
-                    output.only_correct
-                        || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
-                    Some(sorted_output_keys),
-                    aggr_id_attribute.to_string(),
-                )
-            };
+            let output = create_output(
+                output.counts,
+                cell_barcode.is_some(),
+                &output.directory,
+                Some(sorted_output_keys.clone()),
+                &aggr_id_attribute,
+                single_column_counts_only,
+            )?;
 
             engine::Engine::from_gtf(
                 gtf_entries,
@@ -102,20 +126,18 @@ pub fn quantify(
                     })
                     .collect();
             let references = references?;
-            let sorted_output_keys: Vec<String> =
-                references.iter().map(|(name, _tid, _length)| name.clone()).collect();
-
-            let output = if cell_barcode.is_some() {
-                engine::Output::new_singlecell(output.directory.clone(), Some(sorted_output_keys))?
-            } else {
-                engine::Output::new_per_region(
-                    output.directory.join("counts.tsv"),
-                    output.only_correct
-                        || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
-                    Some(sorted_output_keys),
-                    "reference".to_string(),
-                )
-            };
+            let sorted_output_keys: Vec<String> = references
+                .iter()
+                .map(|(name, _tid, _length)| name.clone())
+                .collect();
+            let output = create_output(
+                output.counts,
+                cell_barcode.is_some(),
+                &output.directory,
+                Some(sorted_output_keys.clone()),
+                "reference",
+                single_column_counts_only,
+            )?;
 
             engine::Engine::from_references(
                 references,
@@ -129,19 +151,15 @@ pub fn quantify(
         }
 
         crate::config::Source::BamTag(crate::config::BamTag { tag }) => {
-            let output = if cell_barcode.is_some() {
-                engine::Output::new_singlecell(output.directory.clone(), None)?
-            } else {
-                engine::Output::new_per_region(
-                    output.directory.join("counts.tsv"),
-                    output.only_correct
-                        || matches!(strategy.direction, crate::config::MatchDirection::Ignore),
-                    None,
-                    std::str::from_utf8(&tag)
-                        .context("Bam tag name was not valid utf8")?
-                        .to_string(),
-                )
-            };
+            let output = create_output(
+                output.counts,
+                cell_barcode.is_some(),
+                &output.directory,
+                None,
+                std::str::from_utf8(&tag).context("Bam tag name was not valid utf8")?,
+                single_column_counts_only,
+            )?;
+
             engine::Engine::from_bam_tag(
                 tag,
                 filters,
