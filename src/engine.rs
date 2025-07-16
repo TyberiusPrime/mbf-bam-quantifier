@@ -9,8 +9,8 @@ mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
 use crate::config::MatchDirection;
-use crate::deduplication::{AcceptReadResult, DeduplicationStrategy};
-use crate::extractors::UMIExtractor;
+use crate::deduplication::{AcceptReadResult, DedupPerBucket};
+use crate::extractors::Extractors;
 use crate::filters::ReadFilter;
 use crate::gtf::Strand;
 use anyhow::{bail, Context, Result};
@@ -299,7 +299,7 @@ impl CounterPerChunk {
 }
 
 pub enum Output {
-    NoOutput, 
+    NoOutput,
     PerRegion {
         output_filename: PathBuf,
         counter: HashMap<String, (usize, usize)>,
@@ -319,9 +319,7 @@ pub enum Output {
 }
 
 impl Output {
-     pub fn new_no_output(
-    ) -> Self {
-
+    pub fn new_no_output() -> Self {
         Output::NoOutput
     }
 
@@ -402,8 +400,7 @@ impl Output {
 
     pub fn per_chunk(&self) -> CounterPerChunk {
         match self {
-            Output::NoOutput => CounterPerChunk::NoCount{
-            },
+            Output::NoOutput => CounterPerChunk::NoCount {},
             Output::PerRegion { .. } => CounterPerChunk::PerRegion {
                 counter: HashMap::new(),
                 stat_counter: HashMap::new(),
@@ -721,15 +718,15 @@ struct OutputBamInfo {
 
 #[derive(Debug, Copy, Clone)]
 enum Bucket {
+    None,
     PerPosition,
     PerReference(i32),
 }
 
 pub struct Engine {
-    dedup_strategy: DeduplicationStrategy,
     filters: Vec<crate::filters::Filter>,
     matcher: ReadToGeneMatcher,
-    umi_extractor: Option<crate::extractors::UMIExtraction>,
+    umi_config: Option<crate::config::UmiConfig>,
     cell_barcode: Option<crate::barcodes::CellBarcodes>,
     output: Arc<Mutex<Output>>,
 }
@@ -742,8 +739,7 @@ impl Engine {
         entry_id_attribute: &str,
         aggregation_id_attribute: &str,
         filters: Vec<crate::filters::Filter>,
-        dedup_strategy: DeduplicationStrategy,
-        umi_extractor: Option<crate::extractors::UMIExtraction>,
+        umi_config: Option<crate::config::UmiConfig>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
         output: Output,
@@ -779,8 +775,7 @@ impl Engine {
                 count_strategy,
             }),
             filters,
-            dedup_strategy,
-            umi_extractor,
+            umi_config,
             cell_barcode,
             output: Arc::new(Mutex::new(output)),
         })
@@ -788,8 +783,7 @@ impl Engine {
     pub fn from_references(
         references: Vec<(String, i32, u64)>,
         filters: Vec<crate::filters::Filter>,
-        dedup_strategy: DeduplicationStrategy,
-        umi_extractor: Option<crate::extractors::UMIExtraction>,
+        umi_config: Option<crate::config::UmiConfig>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         count_strategy: crate::config::Strategy,
         output: Output,
@@ -804,8 +798,7 @@ impl Engine {
                 direction: count_strategy.direction,
             }),
             filters,
-            dedup_strategy,
-            umi_extractor,
+            umi_config,
             cell_barcode,
             output: Arc::new(Mutex::new(output)),
         })
@@ -814,8 +807,7 @@ impl Engine {
     pub fn from_bam_tag(
         tag: [u8; 2],
         filters: Vec<crate::filters::Filter>,
-        dedup_strategy: DeduplicationStrategy,
-        umi_extractor: Option<crate::extractors::UMIExtraction>,
+        umi_config: Option<crate::config::UmiConfig>,
         cell_barcode: Option<crate::barcodes::CellBarcodes>,
         output: Output,
     ) -> Self {
@@ -830,8 +822,7 @@ impl Engine {
         Engine {
             matcher: ReadToGeneMatcher::TagMatcher(TagMatcher { tag }),
             filters,
-            dedup_strategy,
-            umi_extractor,
+            umi_config,
             cell_barcode,
             output: Arc::new(Mutex::new(output)),
         }
@@ -887,6 +878,7 @@ impl Engine {
             if chunks.is_empty() {
                 bail!("No chunks generated. This might be because the BAM file is empty or the matcher did not find any regions to quantify.");
             }
+            //filter chunks if reference filter is in use.
             for f in self.filters.iter() {
                 if let crate::filters::Filter::Reference(reference_filter) = f {
                     match reference_filter.action {
@@ -949,13 +941,17 @@ impl Engine {
                         let mut orig_index = 0;
                         let mut debug_processed_ids: HashSet<i32> = HashSet::new();
 
-                        let bucket_mode = match self.dedup_strategy.bucket {
-                            crate::deduplication::DeduplicationBucket::PerPosition => {
-                                Bucket::PerPosition
+                        let bucket_mode = if let Some(umi_config) = &self.umi_config {
+                            match umi_config.bucket {
+                                crate::deduplication::DeduplicationBucket::PerPosition => {
+                                    Bucket::PerPosition
+                                }
+                                crate::deduplication::DeduplicationBucket::PerReference => {
+                                    Bucket::PerReference((chunk.stop + max_skip_len) as i32)
+                                }
                             }
-                            crate::deduplication::DeduplicationBucket::PerReference => {
-                                Bucket::PerReference((chunk.stop + max_skip_len) as i32)
-                            }
+                        } else {
+                            Bucket::None
                         };
 
                         while let Some(next_pos) = self.read_until_next_pos(
@@ -1081,60 +1077,6 @@ impl Engine {
                 }
             }
         }
-
-        /* // we still need to establish the barcode sorting, even if
-        // correct_reads_for_clipping is false
-                } */
-
-        /*{ measure_time::info_time!(
-                "{}:{} - outputing reads",
-                &chunk.chr,
-                chunk.start
-            );
-
-            let mut last_pos = None;
-            //we can't do it without storing change_indices because we'd borrow
-            //annotated_reads twice...
-            let mut change_indices = Vec::new();
-            let mut found_filtered = false;
-            for (ii, (read, _org_index)) in annotated_reads.iter().enumerate() {
-                let info = match read {
-                    AnnotatedRead::Counted(info) => info,
-                    _ => {
-                        //we have reached the counted sector.
-                        change_indices.push(ii);
-                        found_filtered = true;
-                        break;
-                    }
-                };
-                let new_pos = Some(info.corrected_position);
-                if new_pos != last_pos {
-                    change_indices.push(ii);
-                    last_pos = Some(info.corrected_position)
-                }
-            }
-            if !found_filtered {
-                change_indices.push(annotated_reads.len());
-            }
-
-            for (start, stop) in change_indices.iter().tuple_windows() {
-                self.dedup_strategy
-                    .dedup(&mut annotated_reads[*start..*stop])
-                    .context("weighting failed")?;
-            }
-
-            let lock = self.output.lock();
-            match lock {
-                Ok(mut output) => {
-                    output
-                        .count_reads(&annotated_reads, &chunk, &interner)
-                        .context("Failed to count reads")?;
-                }
-                Err(_) => {
-                    bail!("Another thread panicked, output no longer available.")
-                }
-            }
-        } */
         Ok(())
     }
 
@@ -1169,6 +1111,10 @@ impl Engine {
             };
 
             let (corrected_position, position_for_bounds_check) = match bucket_mode {
+                Bucket::None =>  {
+                    // no need to correct the position if we don't umi-deduplicate
+                    (read.pos() as i32, read.pos() as i32) 
+                },
                 Bucket::PerPosition => {
                     if max_skip_len > 0 {
                         let rp = read
@@ -1194,8 +1140,14 @@ impl Engine {
                 .or_insert_with(|| PerPosition {
                     reads_forward: Vec::new(),
                     reads_reverse: Vec::new(),
-                    dedup_storage_forward: self.dedup_strategy.new_bucket(),
-                    dedup_storage_reverse: self.dedup_strategy.new_bucket(),
+                    dedup_storage_forward: DedupPerBucket::new(
+                        self.umi_config.is_some(),
+                        self.cell_barcode.is_some(),
+                    ),
+                    dedup_storage_reverse: DedupPerBucket::new(
+                        self.umi_config.is_some(),
+                        self.cell_barcode.is_some(),
+                    ),
                 });
             let (res, dedup_storage) = if read.is_reverse() {
                 (&mut output.reads_reverse, &mut output.dedup_storage_reverse)
@@ -1262,8 +1214,8 @@ impl Engine {
                 }
             };
             let umi: Option<Vec<u8>> = {
-                match self.umi_extractor.as_ref() {
-                    Some(x) => match x.extract(read)? {
+                match self.umi_config.as_ref() {
+                    Some(x) => match x.extractor.extract(read)? {
                         Some(umi) => Some(umi),
                         None => {
                             res.push((AnnotatedRead::NoUMI, *org_index));
@@ -1294,7 +1246,12 @@ impl Engine {
             }
 
             let do_accept: AcceptReadResult =
-                dedup_storage.accept_read(read, res.len(), umi.as_ref(), barcode.as_ref());
+                dedup_storage.accept_read(read, res.len(), umi.as_ref(), barcode.as_ref(),
+                self.umi_config.as_ref().map(|x| x.mode).unwrap_or(
+                    crate::deduplication::DeduplicationMode::NoDedup,
+                ),
+
+            );
             match do_accept {
                 AcceptReadResult::Duplicated => {
                     res.push((

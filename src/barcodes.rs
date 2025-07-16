@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::{collections::HashSet, path::PathBuf};
 
-use crate::extractors::{self, UMIExtractor};
+use crate::extractors::{self, Extractors};
 use serde::Deserializer;
 
 pub fn u8_from_char_or_number<'de, D>(deserializer: D) -> Result<u8, D::Error>
@@ -44,7 +44,7 @@ type Whitelist = HashSet<Vec<u8>>;
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CellBarcodes {
-    extract: extractors::UMIExtraction,
+    extract: extractors::Extractor,
     #[serde(deserialize_with = "u8_from_char_or_number")]
     separator_char: u8,
     #[serde(default)]

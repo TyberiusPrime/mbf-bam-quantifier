@@ -2,9 +2,6 @@
 [input]
 	bam = "input.bam"
 
-[dedup]
-   mode = "none"
-
 
 [output]
 	directory = "output"

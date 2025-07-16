@@ -30,7 +30,6 @@ pub fn run(toml_file: &Path) -> Result<()> {
         &parsed.output,
         parsed.umi,
         parsed.cell_barcodes,
-        parsed.dedup,
         parsed.strategy,
     )
     .context("Error in quantification")?;

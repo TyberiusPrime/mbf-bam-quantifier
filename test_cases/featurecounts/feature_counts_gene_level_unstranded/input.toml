@@ -18,8 +18,6 @@
 	multi_region = 'drop'
 	direction = 'ignore'
 
-[dedup]
-   mode = "none"
 
 [output]
     directory = 'output'

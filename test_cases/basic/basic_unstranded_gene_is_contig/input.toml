@@ -16,9 +16,6 @@
 [strategy]
 	direction = 'ignore'
 
-[dedup]
-   mode = "none"
-
 
 [output]
     directory = "output"

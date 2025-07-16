@@ -14,8 +14,9 @@ mode = "RegexName"
 regex = "barcode=([AGCT-]*)"
 
 [umi]
-mode = "RegexName"
-regex = "umi=([AGCT-]*)"
+extract = {mode = "RegexName", regex = "umi=([AGCT-]*)"}
+mode = "unique"
+bucket = "PerReference"
 
 [[filter]]
 mode = 'NInUMI'
@@ -25,11 +26,6 @@ action = 'remove'
 multi_region = "count_both"
 overlap = "union"
 direction = "Forward"
-
-[dedup]
-mode = "sc"
-umi_grouping = "unique"
-bucket = "PerReference"
 
 [output]
 directory = "output"

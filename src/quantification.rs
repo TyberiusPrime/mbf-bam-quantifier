@@ -2,9 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
     config::{Input, Output},
-    deduplication::DeduplicationStrategy,
     engine,
-    extractors::UMIExtraction,
 };
 use anyhow::{Context, Result};
 use rust_htslib::bam::Read;
@@ -38,9 +36,8 @@ pub fn quantify(
     input: &Input,
     filters: Vec<crate::filters::Filter>,
     output: &Output,
-    umi_extraction: Option<UMIExtraction>,
+    umi_extraction: Option<crate::config::UmiConfig>,
     cell_barcode: Option<crate::barcodes::CellBarcodes>,
-    dedup_strategy: DeduplicationStrategy,
     strategy: crate::config::Strategy,
 ) -> anyhow::Result<()> {
     // Here you would implement the quantification logic
@@ -94,7 +91,6 @@ pub fn quantify(
                 gtf_config.id_attribute.as_str(),
                 aggr_id_attribute,
                 filters,
-                dedup_strategy,
                 umi_extraction,
                 cell_barcode,
                 strategy,
@@ -142,7 +138,6 @@ pub fn quantify(
             engine::Engine::from_references(
                 references,
                 filters,
-                dedup_strategy,
                 umi_extraction,
                 cell_barcode,
                 strategy,
@@ -163,7 +158,6 @@ pub fn quantify(
             engine::Engine::from_bam_tag(
                 tag,
                 filters,
-                dedup_strategy,
                 umi_extraction,
                 cell_barcode,
                 output,
@@ -177,7 +171,7 @@ pub fn quantify(
         &output.directory,
         output.write_annotated_bam,
         input.max_skip_length,
-        input.correct_reads_for_clipping,
+        input.correct_reads_for_clipping.unwrap(),
     )?;
 
     Ok(())

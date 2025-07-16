@@ -15,8 +15,8 @@ where
     Ok(re)
 }
 
-#[enum_dispatch(UMIExtraction)]
-pub trait UMIExtractor {
+#[enum_dispatch(Extractor)]
+pub trait Extractors {
     fn check(&self, _config: &crate::config::Config) -> Result<()> {
         // Default implementation does nothing, can be overridden by specific extractors
         Ok(())
@@ -28,7 +28,7 @@ pub trait UMIExtractor {
 #[serde(deny_unknown_fields)]
 #[serde(tag = "mode")]
 #[enum_dispatch]
-pub enum UMIExtraction {
+pub enum Extractor {
     #[serde(alias = "regex_name")]
     RegexName(RegexName),
 
@@ -50,7 +50,7 @@ pub struct RegexName {
     regex: regex::bytes::Regex,
 }
 
-impl UMIExtractor for RegexName {
+impl Extractors for RegexName {
     fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
         let name = read.qname();
         self.regex
@@ -83,7 +83,7 @@ pub struct ReadRegion {
     stop: u16,
 }
 
-impl UMIExtractor for ReadRegion {
+impl Extractors for ReadRegion {
     fn check(&self, _config: &crate::config::Config) -> Result<()> {
         Ok(self.validate()?)
     }
@@ -108,7 +108,7 @@ pub struct Tag {
     pub tag: [u8; 2],
 }
 
-impl UMIExtractor for Tag {
+impl Extractors for Tag {
     fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
         let tag = read.aux(&self.tag)?;
         match tag {
@@ -128,7 +128,7 @@ pub struct SearchInName {
     len: usize,
 }
 
-impl UMIExtractor for SearchInName {
+impl Extractors for SearchInName {
     fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
         let name = read.qname();
         //where is search in name?

@@ -10,8 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     barcodes::CellBarcodes,
-    deduplication::DeduplicationStrategy,
-    extractors::{UMIExtraction, UMIExtractor},
+    deduplication::{DeduplicationBucket, DeduplicationMode},
+    extractors::{Extractor},
     filters::ReadFilter,
 };
 
@@ -21,13 +21,11 @@ pub struct Config {
     pub input: Input,
     #[serde(default)]
     pub filter: Vec<crate::filters::Filter>,
-    #[serde(alias = "deduplication")]
-    pub dedup: DeduplicationStrategy,
 
     #[serde(default)]
     pub strategy: Strategy,
     #[serde(alias = "UMI")]
-    pub umi: Option<UMIExtraction>,
+    pub umi: Option<UmiConfig>,
     pub cell_barcodes: Option<CellBarcodes>,
     pub output: Output,
 }
@@ -46,8 +44,7 @@ fn default_correct_reads_for_clipping() -> bool {
 pub struct Input {
     #[validate(min_length = 1, message = "BAM filename can not be an empty string")]
     pub bam: String,
-    #[serde(default = "default_correct_reads_for_clipping")]
-    pub correct_reads_for_clipping: bool,
+    pub correct_reads_for_clipping: Option<bool>,
     pub source: Source,
     #[serde(default = "default_max_skip_length")]
     pub max_skip_length: u32,
@@ -107,7 +104,9 @@ where
         Err(serde::de::Error::custom("BAM tag must start with [A-Za-z]"))?;
     }
     if !b[1].is_ascii_alphanumeric() {
-        Err(serde::de::Error::custom("BAM tag 2nd letter must conform to [A-Za-z0-9]"))?;
+        Err(serde::de::Error::custom(
+            "BAM tag 2nd letter must conform to [A-Za-z0-9]",
+        ))?;
     }
 
     Ok([b[0], b[1]])
@@ -197,7 +196,7 @@ pub struct GTFConfig {
 }
 
 fn default_output_counts() -> bool {
-    true 
+    true
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
@@ -209,13 +208,27 @@ pub struct Output {
     #[serde(default)]
     pub only_correct: bool,
 
-    #[serde(default="default_output_counts")]
+    #[serde(default = "default_output_counts")]
     pub counts: bool,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct UmiConfig {
+    #[serde(alias = "extract")]
+    pub extractor: Extractor,
+    pub mode: DeduplicationMode,
+    pub bucket: DeduplicationBucket,
+}
+
+impl UmiConfig {
+    fn check(&self, _config: &Config) -> Result<()> {
+        //self.extractor.check(config)?;
+        Ok(())
+    }
+}
+
 impl Config {
-    pub fn check(&self) -> Result<()> {
-        self.dedup.check(self)?;
+    pub fn check(&mut self) -> Result<()> {
         for f in &self.filter {
             f.check(self)?;
         }
@@ -223,6 +236,16 @@ impl Config {
         self.input.check(self)?;
         if let Some(umi) = self.umi.as_ref() {
             umi.check(self)?;
+            if self.input.correct_reads_for_clipping.is_none() {
+                self.input.correct_reads_for_clipping = Some(true);
+            }
+        } else {
+            if let Some(true) = self.input.correct_reads_for_clipping {
+                bail!("correct_reads_for_clipping is only meaningful if UMI deduplication is activated.");
+            }
+            else {
+                self.input.correct_reads_for_clipping = Some(false);
+            }
         }
         if let Some(cell_barcodes) = self.cell_barcodes.as_ref() {
             cell_barcodes.check(self)?;

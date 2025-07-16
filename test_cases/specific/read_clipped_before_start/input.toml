@@ -11,17 +11,14 @@
 	max_hamming = 0
 
 [umi]
-	mode = 'Tag'
-	tag = 'UB'
+	extract = { mode = 'Tag', tag = 'UB'}
+	mode = "unique"
+	bucket = "PerPosition"
 
 [strategy]
 	multi_region = 'count_both'
 	overlap ='intersection_strict'
 	direction = 'Forward'
-
-[dedup]
-   mode = "sc"
-   umi_grouping = 'unique'
 
 [output]
     directory = 'output'

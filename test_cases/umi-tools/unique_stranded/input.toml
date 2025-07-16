@@ -10,6 +10,10 @@
    aggr_id_attribute = 'gene_id'
 
 [umi]
+	mode = "unique"
+	bucket = "PerPosition"
+
+[umi.extract]
     mode = "read_region"
 	start = 0
 	stop = 6
@@ -17,12 +21,6 @@
 [[filter]]
 	mode = "non_primary"
 	action = "remove"
-
-# strategy.direction ='forward' is standard
-
-[dedup]
-	mode = "umi"
-	umi_grouping = "unique"
 
 
 [output]

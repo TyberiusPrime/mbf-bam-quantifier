@@ -18,9 +18,6 @@
 	multi_region = 'drop'
 	direction = 'forward'
 
-[dedup]
-   mode = "none"
-
 [output]
     directory = 'output'
     write_annotated_bam = false

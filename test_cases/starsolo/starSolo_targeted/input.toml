@@ -23,8 +23,9 @@
 		'input_BD_CLS3.txt',
 	]
 [umi]
-	mode = 'Tag'
-	tag = 'UB'
+	extract = {mode = 'Tag', tag = 'UB'}
+	mode = "unique"
+	bucket = "per_position"
 
 # star solo only assigns genes to reads if the match the
 # known splicing.
@@ -43,10 +44,6 @@
 	multi_region = 'count_both'
 	overlap ='intersection_strict'
 	direction = 'Forward'
-
-[dedup]
-   mode = "sc"
-   umi_grouping = 'unique'
 
 [output]
     directory = 'output'

@@ -1,4 +1,3 @@
-
 [input]
     bam = "input.bam"
 	correct_reads_for_clipping = false # starsolo doesn't, so we don't either.
@@ -12,18 +11,15 @@
 	max_hamming = 0
 
 [umi]
-	mode = 'Tag'
-	tag = 'UB'
+	extract = { mode = 'Tag', tag = 'UB'}
+	mode = "unique"
+    bucket = 'PerReference'
 
 [strategy]
 	multi_region = 'count_both'
 	overlap ='intersection_strict'
 	direction = 'Forward'
 
-[dedup]
-   mode = "sc"
-   umi_grouping = 'unique'
-   bucket = 'PerReference'
 
 [output]
     directory = 'quant'

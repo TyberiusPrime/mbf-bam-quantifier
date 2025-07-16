@@ -3,8 +3,11 @@
 	source.mode = "bam_tag"
     source.tag = 'XF'
 
-
 [umi]
+	mode ="unique"
+	bucket = "PerPosition"
+
+[umi.extract]
     mode = "search_in_name"
     search = "UMI_"
     skip = 0
@@ -12,11 +15,6 @@
 
 [strategy]
 	direction = 'ignore'
-
-[dedup]
-	mode = "umi"
-	umi_grouping = "unique"
-
 
 [output]
 	directory = 'output'

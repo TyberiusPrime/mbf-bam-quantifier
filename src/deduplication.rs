@@ -1,69 +1,25 @@
 use std::collections::HashMap;
 
-use anyhow::bail;
 use rust_htslib::bam;
 
-use crate::{bam_ext::BamRecordExtensions, config::Config};
-
-#[derive(serde::Deserialize, Debug, Clone)]
-pub struct DeduplicationStrategy {
-    //this is 'flattend' into the [dedup]
-    #[serde(flatten)]
-    pub mode: DeduplicationMode,
-    #[serde(default)]
-    pub bucket: DeduplicationBucket,
-}
-
-impl DeduplicationStrategy {
-    pub fn new_bucket(&self) -> DedupPerBucket {
-        match &self.mode {
-            DeduplicationMode::NoDedup => DedupPerBucket::None,
-            DeduplicationMode::Umi => DedupPerBucket::Umi(HashMap::new()),
-            DeduplicationMode::SingleCell => DedupPerBucket::SingleCell(HashMap::new()),
-        }
-    }
-
-    pub fn check(&self, config: &Config) -> anyhow::Result<()> {
-        match self.mode {
-            DeduplicationMode::NoDedup => {}
-            DeduplicationMode::Umi => {
-                if config.umi.is_none() {
-                    bail!("UMI deduplication quantification requires UMI extraction to be defined in the configuration.");
-                }
-            }
-            DeduplicationMode::SingleCell => {
-                if config.cell_barcodes.is_none() {
-                    bail!("SingleCell quantification requires cell barcodes to be defined in the configuration.");
-                }
-                if config.umi.is_none() {
-                    bail!("SingleCell quantification requires UMI extraction to be defined in the configuration.");
-                }
-            }
-        }
-        Ok(())
-    }
-}
+use crate::{bam_ext::BamRecordExtensions};
 
 #[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, Default)]
 pub enum DeduplicationBucket {
     #[default]
+    #[serde(alias = "per_position")]
     PerPosition,
+    #[serde(alias = "per_reference")]
     PerReference,
 }
 
-#[derive(serde::Deserialize, Debug, Clone, strum_macros::Display)]
-//have it read the mode field
-#[serde(tag = "mode")]
+#[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, Copy)]
 pub enum DeduplicationMode {
     #[serde(alias = "none")]
     NoDedup,
 
-    #[serde(alias = "umi")]
-    Umi,
-
-    #[serde(alias = "singlecell")]
-    #[serde(alias = "sc")]
-    SingleCell,
+    #[serde(alias = "unique")]
+    Unique,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -87,10 +43,16 @@ impl PartialOrd for MappingQuality {
     }
 }
 
+pub struct UmiGroupInfo {
+    best_read_index: usize,
+    best_mapping_quality: MappingQuality,
+    count: usize,
+}
+
 pub enum DedupPerBucket {
     None,
-    Umi(HashMap<Vec<u8>, (usize, MappingQuality)>),
-    SingleCell(HashMap<(Vec<u8>, Vec<u8>), (usize, MappingQuality)>),
+    Umi(HashMap<Vec<u8>, UmiGroupInfo>),
+    SingleCell(HashMap<Vec<u8>, HashMap<Vec<u8>, UmiGroupInfo>>),
 }
 
 pub enum AcceptReadResult {
@@ -100,12 +62,22 @@ pub enum AcceptReadResult {
 }
 
 impl DedupPerBucket {
+    pub fn new(umi: bool, single_cell: bool) -> Self {
+        match (umi, single_cell) {
+            (true, true) => DedupPerBucket::SingleCell(HashMap::new()),
+            (true, false) => DedupPerBucket::Umi(HashMap::new()),
+            (false, true) => unimplemented!(), // TODO, I guess
+            (false, false) => DedupPerBucket::None,
+        }
+    }
+
     pub fn accept_read(
         &mut self,
         read: &bam::record::Record,
         this_index: usize,
         umi: Option<&Vec<u8>>,
         barcode: Option<&Vec<u8>>,
+        _mode: DeduplicationMode,
     ) -> AcceptReadResult {
         match self {
             DedupPerBucket::None => AcceptReadResult::New,
@@ -119,18 +91,30 @@ impl DedupPerBucket {
                 };
                 let hit = map.get_mut(umi);
                 match hit {
-                    Some((old_index, mq)) => {
+                    Some(UmiGroupInfo {
+                        best_read_index: old_index,
+                        best_mapping_quality: mq,
+                        count,
+                    }) => {
                         if this_mq > *mq {
                             *mq = this_mq;
                             let result = AcceptReadResult::DuplicateButPrefered(*old_index);
                             *old_index = this_index;
+                            *count += 1;
                             result
                         } else {
                             AcceptReadResult::Duplicated
                         }
                     }
                     None => {
-                        map.insert(umi.to_vec(), (this_index, this_mq));
+                        map.insert(
+                            umi.to_vec(),
+                            UmiGroupInfo {
+                                best_read_index: this_index,
+                                best_mapping_quality: this_mq,
+                                count: 1,
+                            },
+                        );
                         AcceptReadResult::New
                     }
                 }
@@ -143,22 +127,27 @@ impl DedupPerBucket {
                     .expect("Barcode should be extracted before deduplication")
                     .as_slice();
 
-                /* println!("read {:?} pos {}, umi {}, barcode {}",
-                                   std::str::from_utf8(read.qname()),
-                                   read.pos(),
-                                   std::str::from_utf8(umi).unwrap_or("invalid UMI"),
-                                   std::str::from_utf8(barcode).unwrap_or("invalid barcode"));
-                */
                 let this_mq = MappingQuality {
                     no_of_alignments: read.no_of_alignments().try_into().unwrap_or(255),
                     mapq: read.mapq(),
                 };
-                let hit = map.get_mut(&(umi.to_vec(), barcode.to_vec()));
+                let by_barcode = map.entry(barcode.to_vec());
+                let by_barcode = match by_barcode {
+                    std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(e) => e.insert(HashMap::new()),
+                };
+                let hit = by_barcode.get_mut(umi);
+                //todo: Combine this with above
                 match hit {
-                    Some((old_index, mq)) => {
+                    Some(UmiGroupInfo {
+                        best_read_index: old_index,
+                        best_mapping_quality: mq,
+                        count,
+                    }) => {
                         if this_mq > *mq {
                             *mq = this_mq;
                             let result = AcceptReadResult::DuplicateButPrefered(*old_index);
+                            *count += 1;
                             *old_index = this_index;
                             result
                         } else {
@@ -166,7 +155,14 @@ impl DedupPerBucket {
                         }
                     }
                     None => {
-                        map.insert((umi.to_vec(), barcode.to_vec()), (this_index, this_mq));
+                        by_barcode.insert(
+                            umi.to_vec(),
+                            UmiGroupInfo {
+                                best_read_index: this_index,
+                                best_mapping_quality: this_mq,
+                                count: 1,
+                            },
+                        );
                         AcceptReadResult::New
                     }
                 }

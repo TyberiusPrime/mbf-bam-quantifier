@@ -8,11 +8,5 @@
    references = []
    action ='keep_only'
 
-
-
-[dedup]
-   mode = "none"
-
-
 [output]
 	directory = "output"

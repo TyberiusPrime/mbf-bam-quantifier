@@ -9,26 +9,13 @@
    mode ="bam_references"
 
 [umi]
+	bucket = 'PerPosition'
+	mode = "unique"
+[umi.extract]
     mode = "SearchInName"
 	search = "_"
 	skip = 0
 	length = 5
-
-# [[filter]]
-# 	mode = "non_primary"
-# 	action = "remove"
-
-# [[filter]]
-# 	mode = "MultiMapper"
-# 	action = "remove"
-
-
-# strategy.direction ='forward' is standard
-
-[dedup]
-	mode = "umi"
-	bucket = 'PerPosition'
-	umi_grouping = "unique"
 
 
 [output]

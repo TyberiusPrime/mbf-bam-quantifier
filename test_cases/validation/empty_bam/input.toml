@@ -3,11 +3,5 @@
 	bam = ""
 	source.mode = "BamReferences"
 
-
-
-[dedup]
-   mode = "none"
-
-
 [output]
 	directory = "output"

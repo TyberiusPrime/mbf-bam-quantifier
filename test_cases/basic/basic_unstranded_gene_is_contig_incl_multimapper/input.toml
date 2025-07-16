@@ -12,10 +12,6 @@
 [strategy]
 	direction = 'ignore'
 
-[dedup]
-   mode = "none"
-
-
 [output]
     directory = "output"
     write_annotated_bam=false

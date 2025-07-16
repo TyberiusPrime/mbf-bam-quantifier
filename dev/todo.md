@@ -73,3 +73,14 @@ dedup + umi should be one...
 
 +- checkout https://github.com/Daniel-Liu-c0deb0t/UMICollapse
  (doesn't seem to have test cases)
+
+
+umi dedup methods
+- [x] unique
+- [ ] percentile
+- [ ] cluster, 
+- [ ] adjacency 
+- [ ] directional,
+- [ ] starsolo directional,
+- [ ] BD DBEC
+

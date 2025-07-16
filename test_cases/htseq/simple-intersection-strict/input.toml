@@ -19,9 +19,6 @@
 	overlap = 'intersection_strict'
     multi_region = 'drop'
 
-[dedup]
-   mode = "none"
-
 [output]
     directory = 'output'
     only_correct = true

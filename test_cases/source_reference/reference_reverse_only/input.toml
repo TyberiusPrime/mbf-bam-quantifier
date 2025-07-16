@@ -8,9 +8,6 @@
 [strategy]
 	direction = 'reverse'
 
-[dedup]
-   mode = "none"
-
 
 [output]
 	directory = 'output'

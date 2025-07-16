@@ -5,15 +5,15 @@
 
 
 [umi]
+	mode = "unique"
+	bucket = "PerPosition"
+
+[umi.extract]
     mode = "regex_name"
     regex = ":(UMI_[AGTC]+):"
 
 [strategy]
 	direction = 'ignore'
-
-[dedup]
-	mode = "umi"
-	umi_grouping = "unique"
 
 
 [output]
