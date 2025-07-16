@@ -31,6 +31,9 @@
       };
 
       bacon = pkgs.bacon;
+      our_python = pkgs.python3.withPackages (ps: with ps; [
+        pysam
+      ]);
     in rec {
       # `nix build`
       packages.mbf-bam-quantifier = naersk-lib.buildPackage {
@@ -74,7 +77,7 @@
         src = ./.;
         buildInputs = with pkgs; [openssl];
         mode = "test";
-        nativeBuildInputs = with pkgs; [pkg-config cargo-nextest clang perl cmake];
+        nativeBuildInputs = with pkgs; [pkg-config cargo-nextest clang perl cmake our_python];
         cargoTestCommands = old: ["cargo nextest run $cargo_test_options --no-fail-fast"];
         override = {
           buildPhase = ":";
@@ -142,6 +145,7 @@
           pkgs.rust-analyzer
           rust
           pkgs.clang
+          our_python
         ];
         LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
       };
@@ -168,6 +172,9 @@
         ];
         LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
         CARGO_TARGET_DIR = "target_editor";
+        shellHook = ''
+          nvim $(fd '.rs|.toml|.md')
+          '';
       };
       devShells.doc = pkgs.mkShell {
         nativeBuildInputs = [pkgs.hugo];

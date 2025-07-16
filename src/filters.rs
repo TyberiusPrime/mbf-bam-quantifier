@@ -83,7 +83,7 @@ pub struct MultiMapper {
 
 impl ReadFilter for MultiMapper {
     fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
-        let alignment_count = read.no_of_alignments();
+        let alignment_count = read.no_of_alignments(); //reads nh tag
         let hit = alignment_count > 1;
         match self.action {
             KeepOrRemove::KeepOnly => !hit,

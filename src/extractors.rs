@@ -91,7 +91,7 @@ impl UMIExtractor for ReadRegion {
     fn extract(&self, read: &rust_htslib::bam::record::Record) -> Result<Option<Vec<u8>>> {
         if self.stop > read.seq_len() as u16 {
             bail!(
-                "Read region stop ({}) exceeds read length ({})",
+                "Extract region stop ({}) exceeds read length ({})",
                 self.stop,
                 read.seq_len()
             );
@@ -124,6 +124,7 @@ pub struct SearchInName {
     #[serde(deserialize_with = "crate::config::u8_from_string")]
     search: Vec<u8>,
     skip: usize,
+    #[serde(alias = "length")]
     len: usize,
 }
 
