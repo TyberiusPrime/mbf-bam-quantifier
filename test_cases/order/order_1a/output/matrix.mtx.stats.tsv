@@ -1,8 +1,9 @@
 stat	count
 ambiguous	0
+approximate_umi_duplicate	0
 barcode_not_in_allowlist	1056
 correct	2098
-duplicate	5180
+exact_umi_duplicate	5180
 filtered	0
 no_barcode	0
 no_umi	0

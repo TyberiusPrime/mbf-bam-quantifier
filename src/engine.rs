@@ -129,26 +129,37 @@ pub struct DuplicateReadInfo {
     corrected_position: i32, // clipping corrected position. Samspec is limited to 0..2^31-1,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AnnotatedRead {
     Filtered,
     //FilteredInQuant, might want to do this for strategy.multi_region hits?
     NotInRegion,
     Counted(Box<AnnotatedReadInfo>), // otherwise this is as large as AnnotatedReadInfo for each
     // entry.
-    Duplicate(Box<DuplicateReadInfo>),
+    ExactUmiDuplicate(Box<DuplicateReadInfo>),
+    ApproximateUmiDuplicate(Box<DuplicateReadInfo>),
     NoBarcode,
     NoUMI,
     BarcodeNotInWhitelist(Vec<u8>),
 }
 
-#[derive(Debug)]
+impl AnnotatedRead {
+    pub fn new_exact_duplicate(corrected_position: i32) -> Self {
+        AnnotatedRead::ExactUmiDuplicate(Box::new(DuplicateReadInfo { corrected_position }))
+    }
+
+    pub fn new_approximate_duplicate(corrected_position: i32) -> Self {
+        AnnotatedRead::ApproximateUmiDuplicate(Box::new(DuplicateReadInfo { corrected_position }))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Hits {
     correct: Vec<string_interner::symbol::SymbolU32>,
     reverse: Vec<string_interner::symbol::SymbolU32>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AnnotatedReadInfo {
     pub corrected_position: i32, // clipping corrected position. Samspec is limited to 0..2^31-1,
     // so i32 is safe, and it allows us to have negative corrected positions
@@ -238,7 +249,8 @@ impl CounterPerChunk {
                             //these are 'accidential overfetches'
                             "overfetch"
                         }
-                        AnnotatedRead::Duplicate(_) => "duplicate",
+                        AnnotatedRead::ExactUmiDuplicate(_) => "exact_umi_duplicate",
+                        AnnotatedRead::ApproximateUmiDuplicate(_) => "approximate_umi_duplicate",
                         AnnotatedRead::NoBarcode => "no_barcode",
 
                         AnnotatedRead::NoUMI => "no_umi",
@@ -280,7 +292,8 @@ impl CounterPerChunk {
                             "overfetch"
                         }
 
-                        AnnotatedRead::Duplicate(_) => "duplicate",
+                        AnnotatedRead::ExactUmiDuplicate(_) => "exact_umi_duplicate",
+                        AnnotatedRead::ApproximateUmiDuplicate(_) => "approximate_umi_duplicate",
 
                         AnnotatedRead::NoBarcode => "no_barcode",
 
@@ -334,7 +347,8 @@ impl Output {
             ("correct", 0),
             ("reverse", 0),
             ("outside", 0),
-            ("duplicate", 0),
+            ("exact_umi_duplicate", 0),
+            ("approximate_umi_duplicate", 0),
             ("no_barcode", 0),
             ("no_umi", 0),
             ("barcode_not_in_allowlist", 0),
@@ -378,7 +392,8 @@ impl Output {
             ("correct", 0),
             ("reverse", 0),
             ("outside", 0),
-            ("duplicate", 0),
+            ("exact_umi_duplicate", 0),
+            ("approximate_umi_duplicate", 0),
             ("no_barcode", 0),
             ("no_umi", 0),
             ("barcode_not_in_allowlist", 0),
@@ -939,7 +954,7 @@ impl Engine {
                         ))?;
                         let mut read = bam::Record::new();
                         let mut orig_index = 0;
-                        let mut debug_processed_ids: HashSet<i32> = HashSet::new();
+                        let mut debug_processed_positions: HashSet<i32> = HashSet::new();
 
                         let bucket_mode = if let Some(umi_config) = &self.umi_config {
                             match umi_config.bucket {
@@ -970,10 +985,10 @@ impl Engine {
                             let done_positions = read_catcher;
                             read_catcher = remaining_positions;
                             for (done_pos, block) in done_positions.into_iter() {
-                                if debug_processed_ids.contains(&done_pos) {
+                                if debug_processed_positions.contains(&done_pos) {
                                     panic!("We are processing the same position twice.Bug");
                                 }
-                                debug_processed_ids.insert(done_pos);
+                                debug_processed_positions.insert(done_pos);
                                 self.capture_read_block(
                                     block,
                                     &mut output_catcher,
@@ -984,7 +999,7 @@ impl Engine {
                         }
                         //capture eventual remaining blocks
                         for (done_pos, block) in read_catcher.into_iter() {
-                            if debug_processed_ids.contains(&done_pos) {
+                            if debug_processed_positions.contains(&done_pos) {
                                 panic!("We are processing the same position twice.Bug");
                             }
                             for read in &block.reads_forward {
@@ -1061,19 +1076,37 @@ impl Engine {
         Ok(())
     }
 
+    ///All reads that are going to be in this position block have been captured.
     fn capture_read_block(
         &self,
-        read_block: PerPosition,
+        mut read_block: PerPosition,
         output_cacher: &mut CounterPerChunk,
         mut idx_to_annotated: Option<&mut HashMap<usize, AnnotatedRead>>,
     ) -> Result<()> {
-        for block in [read_block.reads_forward, read_block.reads_reverse] {
+        let dedup_mode = self
+            .umi_config
+            .as_ref()
+            .map(|x| x.mode)
+            .unwrap_or(crate::deduplication::DeduplicationMode::NoDedup);
+
+        for (block, dedup_storage) in [
+            (
+                &mut read_block.reads_forward,
+                &mut read_block.dedup_storage_forward,
+            ),
+            (
+                &mut read_block.reads_reverse,
+                &mut read_block.dedup_storage_reverse,
+            ),
+        ] {
+            dedup_storage.finish_bucket(block, dedup_mode);
+
             output_cacher
                 .count_reads(&block)
                 .context("Failed to count reads in read block")?;
             if let Some(idx_to_annotated) = idx_to_annotated.as_mut() {
                 for (read, org_index) in block {
-                    idx_to_annotated.insert(org_index, read);
+                    idx_to_annotated.insert(*org_index, read.clone());
                 }
             }
         }
@@ -1111,10 +1144,10 @@ impl Engine {
             };
 
             let (corrected_position, position_for_bounds_check) = match bucket_mode {
-                Bucket::None =>  {
+                Bucket::None => {
                     // no need to correct the position if we don't umi-deduplicate
-                    (read.pos() as i32, read.pos() as i32) 
-                },
+                    (read.pos() as i32, read.pos() as i32)
+                }
                 Bucket::PerPosition => {
                     if max_skip_len > 0 {
                         let rp = read
@@ -1246,18 +1279,11 @@ impl Engine {
             }
 
             let do_accept: AcceptReadResult =
-                dedup_storage.accept_read(read, res.len(), umi.as_ref(), barcode.as_ref(),
-                self.umi_config.as_ref().map(|x| x.mode).unwrap_or(
-                    crate::deduplication::DeduplicationMode::NoDedup,
-                ),
-
-            );
+                dedup_storage.accept_read(read, res.len(), umi.as_ref(), barcode.as_ref());
             match do_accept {
                 AcceptReadResult::Duplicated => {
                     res.push((
-                        AnnotatedRead::Duplicate(Box::new(DuplicateReadInfo {
-                            corrected_position,
-                        })),
+                        AnnotatedRead::new_exact_duplicate(corrected_position),
                         *org_index,
                     ));
                     *org_index += 1;
@@ -1283,9 +1309,7 @@ impl Engine {
                 AcceptReadResult::DuplicateButPrefered(idx_to_set_duplicate) => {
                     let (_old, old_org_index) = &res[idx_to_set_duplicate];
                     res[idx_to_set_duplicate] = (
-                        AnnotatedRead::Duplicate(Box::new(DuplicateReadInfo {
-                            corrected_position,
-                        })),
+                        AnnotatedRead::new_exact_duplicate(corrected_position),
                         *old_org_index,
                     );
 
@@ -1353,8 +1377,16 @@ impl Engine {
                     /* AnnotatedRead::FilteredInQuant => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(2))?;
                     } */
-                    AnnotatedRead::Duplicate(info) => {
+                    AnnotatedRead::ExactUmiDuplicate(info) => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(3))?;
+                        read.replace_aux(
+                            b"XP",
+                            //convert back into sam's 1 based coordinates.
+                            rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
+                        )?;
+                    }
+                    AnnotatedRead::ApproximateUmiDuplicate(info) => {
+                        read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(7))?;
                         read.replace_aux(
                             b"XP",
                             //convert back into sam's 1 based coordinates.

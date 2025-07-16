@@ -813,6 +813,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "indxvec"
+version = "1.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f80ec91439747afc38510dd9ddac3d776f3485197b9b7d6cc81c719db5cd8faa"
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1094,6 +1100,7 @@ dependencies = [
  "linereader",
  "log",
  "measure_time",
+ "medians",
  "memchr",
  "mimalloc",
  "niffler",
@@ -1121,6 +1128,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51c55d61e72fc3ab704396c5fa16f4c184db37978ae4e94ca8959693a235fc0e"
 dependencies = [
  "log",
+]
+
+[[package]]
+name = "medians"
+version = "3.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0567e21750b99d3ddbc4f57fc09be39381785d8930405a9b29c20c4b34bdcc31"
+dependencies = [
+ "indxvec",
 ]
 
 [[package]]

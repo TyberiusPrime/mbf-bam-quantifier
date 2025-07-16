@@ -84,3 +84,8 @@ umi dedup methods
 - [ ] starsolo directional,
 - [ ] BD DBEC
 
+
+
+- when deduping per gene/reference, we need to make sure correct_read_pos is false.
+Otherwise we might process the fake '0' position somewhere after max_split_size again.
+(our paranoia code should catch that though, so we'll know when it happens)
