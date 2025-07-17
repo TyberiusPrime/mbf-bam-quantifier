@@ -1210,14 +1210,15 @@ impl Engine {
                 }
                 Bucket::PerReference => {
                     // since here chunk = reference len, we simply place them to the right
-                    // of all possible positions, 
+                    // of all possible positions,
                     (chunk.stop + max_skip_len) as i32 // a position beyond the end of the
                                                        // chunk. Which means we collect all reads on this reference.
                 }
                 Bucket::PerRegion => {
-                    // we have a handy low-digit number for each region in a chunk thanks
+                    // we have a handy low-digit id for each region in a chunk thanks
                     // to our string interning of the region names
                     // we use that to place the reads in a virtual position after the chunk.
+                    // one value per region...
                     if region_hit.is_none() {
                         region_hit = Some(self.matcher.hits(chunk, read, interner)?)
                     }
@@ -1234,11 +1235,12 @@ impl Engine {
                                 .checked_add(region_no)
                                 .expect("Genes in region, plus chunk size exceeding i32")
                         }
-                        //_ => start, // Reads matching more than one region, in per region mode, are
-                        //// not counted.
                         _ => {
                             panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier (bug).");
-                            //todo: check this before-hand?
+                            // we're checking this before hand see any_overlapping_features
+                            // the other option would be to silently not count them (bad)
+                            // or somehow multiply them for both buckets (too much implementation)
+                            // so we got with explicitly not counting them
                         }
                     }
                 }
