@@ -70,7 +70,7 @@ impl PartialOrd for MappingQuality {
 pub struct UmiGroupInfo {
     best_read_index: usize,
     best_mapping_quality: MappingQuality,
-    count: usize, //todo: save bytes?
+    count: u64, //todo: save bytes?
 }
 
 pub enum DedupPerBucket {
@@ -177,11 +177,11 @@ impl DedupPerBucket {
         mode: DeduplicationMode,
     ) {
         match self {
-            DedupPerBucket::None => {}
-            DedupPerBucket::Umi(map) => {
-                Self::finish_umi_subbucket(mode, &map, reads);
+            &mut DedupPerBucket::None => {}
+            &mut DedupPerBucket::Umi(ref mut map) => {
+                Self::finish_umi_subbucket(mode, map, reads);
             }
-            DedupPerBucket::SingleCell(by_barcode) => {
+            &mut DedupPerBucket::SingleCell(ref mut by_barcode) => {
                 for (_barcode, map) in by_barcode.iter_mut() {
                     Self::finish_umi_subbucket(mode, map, reads);
                 }
@@ -191,26 +191,29 @@ impl DedupPerBucket {
 
     fn finish_umi_subbucket(
         mode: DeduplicationMode,
-        map: &HashMap<BString, UmiGroupInfo>,
+        map: &mut HashMap<BString, UmiGroupInfo>,
         reads: &mut Vec<(engine::AnnotatedRead, usize)>,
     ) {
         match mode {
             DeduplicationMode::NoDedup | DeduplicationMode::Unique => {}
             DeduplicationMode::Percentile => {
-                let filter = dedup_percentile(map);
+                let filter = dedup_percentile(map); //does not change couns
                 filter_reads_with_those_umis(reads, filter)
             }
             DeduplicationMode::Cluster(max_hamming) => {
-                let filter = dedup_cluster(map, max_hamming.max_distance);
-                filter_reads_with_those_umis(reads, filter)
+                let (filter, add_counts) = dedup_cluster(map, max_hamming.max_distance);
+                filter_reads_with_those_umis(reads, filter);
+                update_umi_counts(map, add_counts);
             }
             DeduplicationMode::Directional(max_hamming) => {
-                let filter = dedup_directional(map, max_hamming.max_distance, -1);
-                filter_reads_with_those_umis(reads, filter)
+                let (filter, add_counts) = dedup_directional(map, max_hamming.max_distance, -1);
+                filter_reads_with_those_umis(reads, filter);
+                update_umi_counts(map, add_counts);
             }
             DeduplicationMode::DirectionalStarsolo(max_hamming) => {
-                let filter = dedup_directional(map, max_hamming.max_distance, 0);
-                filter_reads_with_those_umis(reads, filter)
+                let (filter, add_counts) = dedup_directional(map, max_hamming.max_distance, 0);
+                filter_reads_with_those_umis(reads, filter);
+                update_umi_counts(map, add_counts);
             }
         }
     }
@@ -274,12 +277,13 @@ fn dedup_percentile(map: &HashMap<BString, UmiGroupInfo>) -> HashSet<&BString> {
     }
 }
 
-fn dedup_cluster(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> HashSet<&BString> {
-    //create a undirected graph with edges where the hamming distance is leq than max_hamming
-    //then find connected components
-    //
+fn dedup_cluster(
+    map: &HashMap<BString, UmiGroupInfo>,
+    max_hamming: u64,
+) -> (HashSet<&BString>, HashMap<BString, u64>) {
     if map.len() < 2 {
-        return HashSet::new(); //no need to cluster if there is only one UMI
+        return (HashSet::new(), HashMap::new()); //no need to cluster if there is only one UMI
+                                                 //TODO: push upward.
     }
     let mut graph = UnGraph::<&BString, u64>::new_undirected(); //todo: do not store edge
                                                                 //weights...
@@ -307,12 +311,12 @@ fn dedup_directional(
     map: &HashMap<BString, UmiGroupInfo>,
     max_hamming: u64,
     lower_count_offset: isize,
-) -> HashSet<&BString> {
+) -> (HashSet<&BString>, HashMap<BString, u64>) {
     //create a undirected graph with edges where the hamming distance is leq than max_hamming
     //then find connected components
     //
     if map.len() < 2 {
-        return HashSet::new(); //no need to cluster if there is only one UMI
+        return (HashSet::new(), HashMap::new()); //no need to cluster if there is only one UMI
     }
     let mut graph = Graph::<(&BString, u64), ()>::new();
     let mut nodes = HashMap::new();
@@ -366,28 +370,35 @@ fn dedup_directional(
     });
 
     let mut filter = HashSet::new();
+    let mut update_counts = HashMap::new();
     for (umi, _count, node_index) in umis_sorted_by_count {
         if !filter.contains(umi) {
             //identify and prune all reachable from this node.
+            let mut add = 0;
             petgraph::visit::depth_first_search(&graph, Some(*node_index), |event| match event {
                 petgraph::visit::DfsEvent::Discover(n, _) => {
-                    let connected_umi = graph[n].0;
+                    let (connected_umi, umi_count) = graph[n];
                     if connected_umi != umi {
                         filter.insert(connected_umi);
+                        add += umi_count;
                     }
                 }
                 _ => {}
             });
+            if add > 0 {
+                update_counts.insert(umi.clone(), add);
+            }
         }
     }
-    filter
+    (filter, update_counts)
 }
 
 fn connected_components_to_filter<'a>(
     connected_components: Vec<Vec<&'a BString>>,
     map: &'a HashMap<BString, UmiGroupInfo>,
-) -> HashSet<&'a BString> {
+) -> (HashSet<&'a BString>, HashMap<BString, u64>) {
     let mut filter = HashSet::new();
+    let mut count_updates = HashMap::new();
 
     for group in connected_components.iter() {
         if group.len() > 1 {
@@ -399,14 +410,27 @@ fn connected_components_to_filter<'a>(
                 })
                 .expect("There should be at least one UMI in the group");
             //and add all others to our filter set
+            let mut add = 0;
             for umi in group.iter() {
                 if umi != max_umi {
                     filter.insert(*umi);
+                    add += map.get(*umi).map(|info| info.count as u64).unwrap();
                 }
             }
+            count_updates.insert((**max_umi).clone(), add);
         }
     }
-    filter
+    (filter, count_updates)
+}
+
+fn update_umi_counts(
+    map: &mut HashMap<BString, UmiGroupInfo>,
+    updated_counts: HashMap<BString, u64>,
+) {
+    for (umi, count) in updated_counts {
+        let info = map.get_mut(&umi).unwrap();
+        info.count += count;
+    }
 }
 
 /// Returns a vector of components, each as a Vec<N> of node values.
@@ -476,8 +500,9 @@ mod test {
 
     use super::{dedup_directional, UmiGroupInfo};
 
-        /// test that directional is +- equivalent to RSEC, based on the example given in the
-        /// BD Rhapsody™ Sequence Analysis Pipeline User's Guide
+    /// test that directional is +- equivalent to RSEC, based on the example given in the
+    /// BD Rhapsody™ Sequence Analysis Pipeline User's Guide
+    #[test]
     fn test_directional_is_rsec() {
         let mut map: HashMap<BString, UmiGroupInfo> = HashMap::new();
         let mut insert = |umi: &[u8], count: usize| {
@@ -489,7 +514,7 @@ mod test {
                         no_of_alignments: 1,
                         mapq: 60,
                     },
-                    count,
+                    count: count.try_into().expect("count should fit into u64"),
                 },
             );
         };
@@ -502,10 +527,23 @@ mod test {
         insert(b"TTCAAAAT", 4);
         insert(b"TTCAAACT", 1);
         insert(b"TTCGGACA", 88);
-        let actual = dedup_directional(&map, 1, -1);
-        assert!(actual.contains::<BString>(&(b"TTCAAAAA".into())));
-        assert!(actual.contains::<BString>(&(b"TTCGGACA".into())));
-        assert_eq!(actual.len(), 2);
+        let (filter, update_counts) = dedup_directional(&map, 1, -1);
+        //super::filter_reads_with_those_umis(reads, filter);
+        dbg!(&update_counts);
+        assert_eq!(update_counts.len(), 1);
+
+        assert!(!filter.contains::<BString>(&(b"TTCAAAAA".into())));
+        assert!(!filter.contains::<BString>(&(b"TTCGGACA".into())));
+        assert_eq!(filter.len(), 7);
+        super::update_umi_counts(&mut map, update_counts);
+        assert_eq!(
+            map.get::<BString>(&(b"TTCAAAAA".into())).unwrap().count,
+            262 // - 153
+        );
+
+        // that one isn't being updated
+        //assert_eq!(update_counts.get::<BString>(&(b"TTCGGACA".into())), 88 - 88);
+
         //todo check numbers
     }
 }
