@@ -118,6 +118,11 @@ fn test_case_umi_tools_position_based_dedup_cluster() {
 }
 
 #[test]
+fn test_case_umi_tools_position_based_dedup_directional() {
+    run_test(std::path::Path::new("test_cases/umi-tools/position_based_dedup/directional"));
+}
+
+#[test]
 fn test_case_umi_tools_position_based_dedup_percentile() {
     run_test(std::path::Path::new("test_cases/umi-tools/position_based_dedup/percentile"));
 }

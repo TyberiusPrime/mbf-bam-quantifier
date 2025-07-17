@@ -9,7 +9,7 @@ should = sys.argv[1]
 actual = sys.argv[2]
 
 # but teh actual should is the sam...
-should = Path(should).parent.parent / "input_single_dir_py3.sam"
+should = Path(should).parent.parent / "input_single_dir_2_py3.sam"
 import pysam
 
 

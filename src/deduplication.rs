@@ -1,5 +1,5 @@
 use bstr::BString;
-use petgraph::graph::Graph;
+use petgraph::graph::{Graph, UnGraph};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rust_htslib::bam;
@@ -36,6 +36,9 @@ pub enum DeduplicationMode {
 
     #[serde(alias = "cluster")]
     Cluster(HammingDistance),
+
+    #[serde(alias = "directional")]
+    Directional(HammingDistance),
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -63,7 +66,7 @@ impl PartialOrd for MappingQuality {
 pub struct UmiGroupInfo {
     best_read_index: usize,
     best_mapping_quality: MappingQuality,
-    count: usize,
+    count: usize, //todo: save bytes?
 }
 
 pub enum DedupPerBucket {
@@ -198,6 +201,10 @@ impl DedupPerBucket {
                 let filter = dedup_cluster(map, max_hamming.max_distance);
                 filter_reads_with_those_umis(reads, filter)
             }
+            DeduplicationMode::Directional(max_hamming) => {
+                let filter = dedup_directional(map, max_hamming.max_distance);
+                filter_reads_with_those_umis(reads, filter)
+            }
         }
     }
 }
@@ -261,11 +268,14 @@ fn dedup_percentile(map: &HashMap<BString, UmiGroupInfo>) -> HashSet<&BString> {
 }
 
 fn dedup_cluster(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> HashSet<&BString> {
-    use petgraph::graph::UnGraph;
     //create a undirected graph with edges where the hamming distance is leq than max_hamming
     //then find connected components
     //
-    let mut graph = UnGraph::<&BString, u64>::new_undirected();
+    if map.len() < 2 {
+        return HashSet::new(); //no need to cluster if there is only one UMI
+    }
+    let mut graph = UnGraph::<&BString, u64>::new_undirected(); //todo: do not store edge
+                                                                //weights...
     let mut nodes = HashMap::new();
     for (umi, _info) in map.iter() {
         let node_index = graph.add_node(umi);
@@ -283,8 +293,83 @@ fn dedup_cluster(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> Hash
             graph.add_edge(*node1, *node2, dist);
         }
     }
+    connected_components_to_filter(connected_components_values_undirected(&graph), map)
+}
+
+fn dedup_directional(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> HashSet<&BString> {
+    //create a undirected graph with edges where the hamming distance is leq than max_hamming
+    //then find connected components
+    //
+    if map.len() < 2 {
+        return HashSet::new(); //no need to cluster if there is only one UMI
+    }
+    let mut graph = Graph::<(&BString, u64), ()>::new();
+    let mut nodes = HashMap::new();
+    for (umi, info) in map.iter() {
+        let node_index = graph.add_node((umi, info.count as u64));
+        nodes.insert(umi, node_index);
+    }
+    for (umi1, umi2) in map.keys().flat_map(|umi1| {
+        map.keys()
+            .filter(move |umi2| umi1 < *umi2)
+            .map(move |umi2| (umi1, umi2))
+    }) {
+        let counts_1 = map.get(umi1).map_or(0, |info| info.count);
+        let counts_2 = map.get(umi2).map_or(0, |info| info.count);
+        let a_exceeds_b = counts_1 >= (2 * counts_2) - 1;
+        let b_exceeds_a = counts_2 >= (2 * counts_1) - 1;
+
+        if a_exceeds_b || b_exceeds_a {
+            let dist = bio::alignment::distance::hamming(umi1, umi2);
+
+            if a_exceeds_b && dist <= max_hamming {
+                let node1 = nodes.get(umi1).expect("UMI should be in the graph");
+                let node2 = nodes.get(umi2).expect("UMI should be in the graph");
+                graph.add_edge(*node1, *node2, ());
+            }
+            //these can happen at the same time. for example with both counts being 1.
+            if b_exceeds_a && dist <= max_hamming {
+                let node1 = nodes.get(umi1).expect("UMI should be in the graph");
+                let node2 = nodes.get(umi2).expect("UMI should be in the graph");
+                graph.add_edge(*node2, *node1, ());
+            }
+        }
+    }
+
+    let mut umis_sorted_by_count = map
+        .iter()
+        .map(|(umi, info)| (umi, info.count, nodes.get(umi).unwrap()))
+        .collect::<Vec<_>>();
+    //we need to sort by count, and on ties by the umi.
+    //(Can't use by_key for lifetime reasons)
+    umis_sorted_by_count.sort_unstable_by(|(umi1, count1, _), (umi2, count2, _)| {
+        count2.cmp(count1).then(umi1.cmp(umi2))
+    });
+
     let mut filter = HashSet::new();
-    let connected_components = connected_components_values(&graph);
+    for (umi, _count, node_index) in umis_sorted_by_count {
+        if !filter.contains(umi) {
+            //identify and prune all reachable from this node.
+            petgraph::visit::depth_first_search(&graph, Some(*node_index), |event| match event {
+                petgraph::visit::DfsEvent::Discover(n, _) => {
+                    let connected_umi = graph[n].0;
+                    if connected_umi != umi {
+                        filter.insert(connected_umi);
+                    }
+                }
+                _ => {}
+            });
+        }
+    }
+    filter
+}
+
+fn connected_components_to_filter<'a>(
+    connected_components: Vec<Vec<&'a BString>>,
+    map: &'a HashMap<BString, UmiGroupInfo>,
+) -> HashSet<&'a BString> {
+    let mut filter = HashSet::new();
+
     for group in connected_components.iter() {
         if group.len() > 1 {
             //find the one with the highest count...
@@ -302,17 +387,40 @@ fn dedup_cluster(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> Hash
             }
         }
     }
-    /* dbg!(&map);
-    dbg!(&connected_components);
-    dbg!(&filter); */
     filter
-
 }
 
 /// Returns a vector of components, each as a Vec<N> of node values.
-pub fn connected_components_values<N: Clone, E>(
-    graph: &Graph<N, E, petgraph::Undirected>,
-) -> Vec<Vec<N>> {
+pub fn connected_components_values_undirected<N: Clone, E>(graph: &UnGraph<N, E>) -> Vec<Vec<N>> {
+    let mut visited = HashSet::new();
+    let mut components = Vec::new();
+
+    for start in graph.node_indices() {
+        if visited.contains(&start) {
+            continue;
+        }
+
+        let mut component = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(start);
+        visited.insert(start);
+
+        while let Some(node) = queue.pop_front() {
+            component.push(graph[node].clone());
+            for neighbor in graph.neighbors(node) {
+                if visited.insert(neighbor) {
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        components.push(component);
+    }
+
+    components
+}
+
+pub fn connected_components_values_directed<N: Clone, E>(graph: &Graph<N, E>) -> Vec<Vec<N>> {
     let mut visited = HashSet::new();
     let mut components = Vec::new();
 

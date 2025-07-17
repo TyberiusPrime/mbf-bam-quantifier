@@ -45,16 +45,17 @@ UMIS that have a count below 1% of the median of the UMis within the bucket are 
 
 ## Cluster
 
-All UMIs that are within <max-hamming-distance> of each other are considered duplicates.
+All UMIs that are within `max_distance = ...` (Hamming) of each other are considered duplicates.
 (The chosen read for the annotated.bam is one from the UMI with the highest count).
 
 (umi-tools: `cluster`, STARSolo: `1MM_all`)
 
-# 1MM_Directional
+# Directional
 
-Form networks with edges defined based on hamming distance threshold and `node A counts >= (2 * node B counts) - 1`.
+Form networks with edges defined based on hamming distance threshold
+(`max_distance = ...`) and `node A counts >= (2 * node B counts) - 1`.
 
-Each connected component is considered a UMI group.
+Each connected component is considered a UMI group. 
 
 TODO: implement
 
@@ -62,7 +63,7 @@ TODO: implement
 
 # 1MM_Directional STAR
 
-TODO: Figure out what star is doing...
+TODO: Figure out what star is doing. Probably a different edge filter
 
 
     
