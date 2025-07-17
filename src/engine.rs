@@ -1041,6 +1041,7 @@ impl Engine {
                                 header,
                                 max_skip_len,
                                 &interner,
+                                self.umi_config.as_ref(),
                             )
                             .context("Failed to write output bam")?;
                         }
@@ -1343,6 +1344,7 @@ impl Engine {
         header: &rust_htslib::bam::Header,
         max_skip_len: u32,
         interner: &OurInterner,
+        umi_config: Option<&crate::config::UmiConfig>,
     ) -> Result<()> {
         let mut out_bam = rust_htslib::bam::Writer::from_path(
             out_bam_path.join(format!("{}.bam", chunk.str_id())),
@@ -1363,6 +1365,11 @@ impl Engine {
         ))?;
         let mut read = bam::Record::new();
         let mut ii = 0;
+        let write_xp = umi_config
+            .map(|umi_config| {
+                matches!(umi_config.bucket, crate::deduplication::DeduplicationBucket::PerPosition)
+            })
+            .unwrap_or(false);
         while let Some(bam_result) = bam.read(&mut read) {
             bam_result?;
             if let Some(anno_read) = idx_to_annotated.get_mut(&ii) {
@@ -1380,19 +1387,23 @@ impl Engine {
                     } */
                     AnnotatedRead::ExactUmiDuplicate(info) => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(3))?;
-                        read.replace_aux(
-                            b"XP",
-                            //convert back into sam's 1 based coordinates.
-                            rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
-                        )?;
+                        if write_xp {
+                            read.replace_aux(
+                                b"XP",
+                                //convert back into sam's 1 based coordinates.
+                                rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
+                            )?;
+                        }
                     }
                     AnnotatedRead::ApproximateUmiDuplicate(info) => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(7))?;
-                        read.replace_aux(
-                            b"XP",
-                            //convert back into sam's 1 based coordinates.
-                            rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
-                        )?;
+                        if write_xp {
+                            read.replace_aux(
+                                b"XP",
+                                //convert back into sam's 1 based coordinates.
+                                rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
+                            )?;
+                        }
                     }
                     AnnotatedRead::BarcodeNotInWhitelist(uncorrected_barcode) => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(4))?;
@@ -1439,11 +1450,13 @@ impl Engine {
                             );
                         }
                         read.replace_aux(b"XR", rust_htslib::bam::record::Aux::String(&tag))?;
-                        read.replace_aux(
-                            b"XP",
-                            //convert back into sam's 1 based coordinates.
-                            rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
-                        )?;
+                        if write_xp {
+                            read.replace_aux(
+                                b"XP",
+                                //convert back into sam's 1 based coordinates.
+                                rust_htslib::bam::record::Aux::I32(info.corrected_position + 1i32),
+                            )?;
+                        }
 
                         if let Some(cell_barcode) = info.barcode.as_ref() {
                             read.replace_aux(
