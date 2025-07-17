@@ -55,6 +55,11 @@ pub fn quantify(
                 .unwrap_or(gtf_config.id_attribute.as_str());
 
             let gtf_entries = input.read_gtf(gtf_config.duplicate_handling, aggr_id_attribute)?;
+            if gtf_entries.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No GTF entries found. Perhaps set subformat to GFF/GTF?"
+                ));
+            }
 
             let sorted_output_keys = {
                 let entries =

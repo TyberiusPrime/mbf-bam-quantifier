@@ -78,6 +78,16 @@ fn test_case_order_order_1b() {
 }
 
 #[test]
+fn test_case_per_region_dedup_per_direction() {
+    run_test(std::path::Path::new("test_cases/per_region/dedup_per_direction"));
+}
+
+#[test]
+fn test_case_per_region_intersecting_regions_aborts() {
+    run_test(std::path::Path::new("test_cases/per_region/intersecting_regions_aborts"));
+}
+
+#[test]
 fn test_case_source_reference_dedup_per_direction() {
     run_test(std::path::Path::new("test_cases/source_reference/dedup_per_direction"));
 }

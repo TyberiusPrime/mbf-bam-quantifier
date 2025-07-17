@@ -13,6 +13,9 @@ pub enum DeduplicationBucket {
     PerPosition,
     #[serde(alias = "per_reference")]
     PerReference,
+    #[serde(alias = "per_region")]
+    PerRegion,
+
 }
 
 #[derive(serde::Deserialize, Debug, Clone, Copy)]

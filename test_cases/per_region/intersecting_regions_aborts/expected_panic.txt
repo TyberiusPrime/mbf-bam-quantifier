@@ -1,0 +1,2 @@
+    0: In PerRegion quantification, regions may not overlap. Fix your input GTF/GFF.
+    1: Overlapping features found in Cd45_antibody_940320:

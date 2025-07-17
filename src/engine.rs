@@ -5,12 +5,12 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use string_interner::symbol::SymbolU32;
-use string_interner::StringInterner;
+use string_interner::{StringInterner, Symbol};
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
 use crate::config::MatchDirection;
-use crate::deduplication::{AcceptReadResult, DedupPerBucket};
+use crate::deduplication::{AcceptReadResult, DedupPerBucket, DeduplicationBucket};
 use crate::extractors::Extractors;
 use crate::filters::ReadFilter;
 use crate::gtf::Strand;
@@ -135,7 +135,7 @@ pub enum AnnotatedRead {
     Filtered,
     //FilteredInQuant, might want to do this for strategy.multi_region hits?
     NotInRegion,
-    Counted(Box<AnnotatedReadInfo>), // otherwise this is as large as AnnotatedReadInfo for each
+    Counted(Box<AnnotatedReadInfo>), // Box, otherwise this is as large as AnnotatedReadInfo for each
     // entry.
     ExactUmiDuplicate(Box<DuplicateReadInfo>),
     ApproximateUmiDuplicate(Box<DuplicateReadInfo>),
@@ -736,7 +736,8 @@ struct OutputBamInfo {
 enum Bucket {
     None,
     PerPosition,
-    PerReference(i32),
+    PerReference,
+    PerRegion,
 }
 
 pub struct Engine {
@@ -745,6 +746,27 @@ pub struct Engine {
     umi_config: Option<crate::config::UmiConfig>,
     cell_barcode: Option<crate::barcodes::CellBarcodes>,
     output: Arc<Mutex<Output>>,
+}
+
+fn has_any_overlapping_features(trees: &HashMap<String, (OurTree, Vec<String>)>) -> Result<()> {
+    for (chr, (tree, _ids)) in trees.iter() {
+        for entry in tree.find(0..u32::MAX) {
+            let mut count = 0;
+            for entry2 in tree.find(entry.interval().clone()) {
+                count += 1;
+                if count > 1 {
+                    //we have more than one feature in this region, so we have overlapping features
+                    bail!(
+                        "Overlapping features found in {}: {:?} {:?}",
+                        chr,
+                        entry,
+                        entry2
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Engine {
@@ -764,7 +786,9 @@ impl Engine {
                 .remove(entry_kind)
                 .with_context(||format!("No GTF entries found for feature {}. Necessary to know where to split the genome productivly.", entry_kind))?;
 
-        let feature_trees = build_trees_from_gtf(aggregation_id_attribute, &feature_entries)
+        //what in the world am I doing here?
+
+        let feature_trees = build_trees_from_gtf(entry_id_attribute, &feature_entries)
             .context("Failed to build feature trees from GTF")?;
 
         let split_trees = if aggregation_id_attribute == entry_id_attribute {
@@ -773,8 +797,15 @@ impl Engine {
             build_trees_from_gtf_merged(aggregation_id_attribute, &feature_entries)
                 .context("Failed to build split trees from GTF")?
         };
+        if let Some(umi_config) = umi_config.as_ref() {
+            if matches!(umi_config.bucket, DeduplicationBucket::PerRegion) {
+                has_any_overlapping_features(&split_trees).context(
+                    "In PerRegion quantification, regions may not overlap. Fix your input GTF/GFF.",
+                )?
+            }
+        }
 
-        let feature_trees = if entry_id_attribute == aggregation_id_attribute {
+        /* let feature_trees = if entry_id_attribute == aggregation_id_attribute {
             split_trees.clone()
         } else {
             build_trees_from_gtf(
@@ -782,7 +813,7 @@ impl Engine {
                 &gtf_entries.remove(entry_kind).expect("unreachable"),
             )
             .context("Failed to build feature trees")?
-        };
+        }; */
 
         Ok(Engine {
             matcher: ReadToGeneMatcher::TreeMatcher(TreeMatcher {
@@ -892,7 +923,7 @@ impl Engine {
         let chunks = {
             let mut chunks = self.matcher.generate_chunks(bam)?;
             if chunks.is_empty() {
-                bail!("No chunks generated. This might be because the BAM file is empty or the matcher did not find any regions to quantify.");
+                bail!("No chunks generated. This might be because the BAM file is empty (at least on the references requested) or the matcher did not find any regions to quantify.");
             }
             //filter chunks if reference filter is in use.
             for f in self.filters.iter() {
@@ -957,17 +988,17 @@ impl Engine {
                         let mut orig_index = 0;
                         let mut debug_processed_positions: HashSet<i32> = HashSet::new();
 
-                        let bucket_mode = if let Some(umi_config) = &self.umi_config {
-                            match umi_config.bucket {
-                                crate::deduplication::DeduplicationBucket::PerPosition => {
-                                    Bucket::PerPosition
-                                }
-                                crate::deduplication::DeduplicationBucket::PerReference => {
-                                    Bucket::PerReference((chunk.stop + max_skip_len) as i32)
-                                }
+                        let bucket_mode = match self.umi_config.as_ref().map(|x| &x.bucket) {
+                            Some(crate::deduplication::DeduplicationBucket::PerPosition) => {
+                                Bucket::PerPosition
                             }
-                        } else {
-                            Bucket::None
+                            Some(crate::deduplication::DeduplicationBucket::PerReference) => {
+                                Bucket::PerReference
+                            }
+                            Some(crate::deduplication::DeduplicationBucket::PerRegion) => {
+                                Bucket::PerRegion
+                            }
+                            None => Bucket::None,
                         };
 
                         while let Some(next_pos) = self.read_until_next_pos(
@@ -987,8 +1018,15 @@ impl Engine {
                             read_catcher = remaining_positions;
                             for (done_pos, block) in done_positions.into_iter() {
                                 if debug_processed_positions.contains(&done_pos) {
-                                    panic!("We are processing the same position twice.Bug");
+                                    panic!("We are processing the same position twice. Bug");
                                 }
+                                match bucket_mode {
+                                    Bucket::PerRegion | Bucket::PerReference => {
+                                        panic!("In-between bucket processing should not happen in these modes. Bug");
+                                    },
+                                    _ => {}
+                                }
+                                //
                                 debug_processed_positions.insert(done_pos);
                                 self.capture_read_block(
                                     block,
@@ -1145,30 +1183,66 @@ impl Engine {
                 None => return Ok(None),
             };
 
-            let (corrected_position, position_for_bounds_check) = match bucket_mode {
-                Bucket::None => {
-                    // no need to correct the position if we don't umi-deduplicate
-                    (read.pos() as i32, read.pos() as i32)
-                }
-                Bucket::PerPosition => {
-                    if max_skip_len > 0 {
-                        let rp = read
-                            .corrected_pos(max_skip_len)
-                            .expect("unaligned read found?");
-                        (rp, rp)
-                    } else {
-                        (read.pos() as i32, read.pos() as i32) //this is safe. it's an aligned read, must be <2^31
-                    }
-                }
-                Bucket::PerReference(l) => (l, read.pos() as i32),
-            };
-
             last_read_pos = Some(
                 read.pos()
                     .try_into()
                     .expect("sam read position for aligned reads should always be <=2^31-1"),
             ); //we read based on stored read position. Once that's
                //reached x+max_skip len the outer frame can process those up to x...
+
+            let mut region_hit = None; //doing it per read, (with optional caching in the
+                                       // matcher?) allows us fancier matchers later on
+            let position_for_bounds_check = read.pos() as i32;
+            let corrected_position = match bucket_mode {
+                Bucket::None => {
+                    // no need to correct the position if we don't umi-deduplicate
+                    read.pos() as i32
+                }
+                Bucket::PerPosition => {
+                    if max_skip_len > 0 {
+                        let rp = read
+                            .corrected_pos(max_skip_len)
+                            .expect("unaligned read found?");
+                        rp
+                    } else {
+                        read.pos() as i32 //this is safe. it's an aligned read, must be <2^31
+                    }
+                }
+                Bucket::PerReference => {
+                    // since here chunk = reference len, we simply place them to the right
+                    // of all possible positions, 
+                    (chunk.stop + max_skip_len) as i32 // a position beyond the end of the
+                                                       // chunk. Which means we collect all reads on this reference.
+                }
+                Bucket::PerRegion => {
+                    // we have a handy low-digit number for each region in a chunk thanks
+                    // to our string interning of the region names
+                    // we use that to place the reads in a virtual position after the chunk.
+                    if region_hit.is_none() {
+                        region_hit = Some(self.matcher.hits(chunk, read, interner)?)
+                    }
+                    let start = (chunk.stop + max_skip_len) as i32;
+                    let rh = region_hit.as_ref().unwrap();
+                    match rh.0.len() {
+                        0 => start,
+                        1 => {
+                            let region_no = rh.0[0].to_usize() + 1;
+                            let region_no: i32 = region_no
+                                .try_into()
+                                .expect("(local) Region number should fit into i32");
+                            start
+                                .checked_add(region_no)
+                                .expect("Genes in region, plus chunk size exceeding i32")
+                        }
+                        //_ => start, // Reads matching more than one region, in per region mode, are
+                        //// not counted.
+                        _ => {
+                            panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier (bug).");
+                            //todo: check this before-hand?
+                        }
+                    }
+                }
+            };
 
             let output = read_catcher
                 .entry(corrected_position)
@@ -1261,8 +1335,10 @@ impl Engine {
                     None => None,
                 }
             };
-            let (genes_hit_correct, genes_hit_reverse) =
-                self.matcher.hits(chunk, read, interner)?;
+            if region_hit.is_none() {
+                region_hit = Some(self.matcher.hits(chunk, read, interner)?)
+            }
+            let (genes_hit_correct, genes_hit_reverse) = region_hit.as_ref().unwrap();
 
             for f in self.filters.iter() {
                 if f.remove_read_after_annotation(
@@ -1295,8 +1371,8 @@ impl Engine {
                         corrected_position: corrected_position,
                         reverse: read.is_reverse(),
                         hits: Hits {
-                            correct: genes_hit_correct.into_iter().collect(),
-                            reverse: genes_hit_reverse.into_iter().collect(),
+                            correct: genes_hit_correct.clone(),
+                            reverse: genes_hit_reverse.clone(),
                         },
                         umi,
                         barcode,
@@ -1319,8 +1395,8 @@ impl Engine {
                         corrected_position: corrected_position,
                         reverse: read.is_reverse(),
                         hits: Hits {
-                            correct: genes_hit_correct,
-                            reverse: genes_hit_reverse,
+                            correct: genes_hit_correct.clone(),
+                            reverse: genes_hit_reverse.clone(),
                         },
                         umi,
                         barcode,
@@ -1367,7 +1443,10 @@ impl Engine {
         let mut ii = 0;
         let write_xp = umi_config
             .map(|umi_config| {
-                matches!(umi_config.bucket, crate::deduplication::DeduplicationBucket::PerPosition)
+                matches!(
+                    umi_config.bucket,
+                    crate::deduplication::DeduplicationBucket::PerPosition
+                )
             })
             .unwrap_or(false);
         while let Some(bam_result) = bam.read(&mut read) {

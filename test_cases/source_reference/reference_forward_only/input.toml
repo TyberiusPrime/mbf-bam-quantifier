@@ -10,3 +10,4 @@
 
 [output]
 	directory = 'output'
+	write_annotated_bam = false
