@@ -11,7 +11,7 @@
 [umi]
 	bucket ='PerPosition'
 	strategy.kind = "directional"
-	strategy.max_distance = 1
+	strategy.max_distance = 2
 
 [umi.extract]
     mode = "SearchInName"
