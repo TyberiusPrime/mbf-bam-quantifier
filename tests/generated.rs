@@ -128,6 +128,11 @@ fn test_case_umi_tools_position_based_dedup_directional_2mm() {
 }
 
 #[test]
+fn test_case_umi_tools_position_based_dedup_directional_starsolo() {
+    run_test(std::path::Path::new("test_cases/umi-tools/position_based_dedup/directional_starsolo"));
+}
+
+#[test]
 fn test_case_umi_tools_position_based_dedup_percentile() {
     run_test(std::path::Path::new("test_cases/umi-tools/position_based_dedup/percentile"));
 }

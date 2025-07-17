@@ -39,6 +39,10 @@ pub enum DeduplicationMode {
 
     #[serde(alias = "directional")]
     Directional(HammingDistance),
+
+    #[serde(alias = "directional_starsolo")]
+    #[serde(alias = "Directional_STARsolo")]
+    DirectionalStarsolo(HammingDistance),
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -191,8 +195,7 @@ impl DedupPerBucket {
         reads: &mut Vec<(engine::AnnotatedRead, usize)>,
     ) {
         match mode {
-            DeduplicationMode::NoDedup => {}
-            DeduplicationMode::Unique => {}
+            DeduplicationMode::NoDedup | DeduplicationMode::Unique => {}
             DeduplicationMode::Percentile => {
                 let filter = dedup_percentile(map);
                 filter_reads_with_those_umis(reads, filter)
@@ -202,7 +205,11 @@ impl DedupPerBucket {
                 filter_reads_with_those_umis(reads, filter)
             }
             DeduplicationMode::Directional(max_hamming) => {
-                let filter = dedup_directional(map, max_hamming.max_distance);
+                let filter = dedup_directional(map, max_hamming.max_distance, -1);
+                filter_reads_with_those_umis(reads, filter)
+            }
+            DeduplicationMode::DirectionalStarsolo(max_hamming) => {
+                let filter = dedup_directional(map, max_hamming.max_distance, 0);
                 filter_reads_with_those_umis(reads, filter)
             }
         }
@@ -296,7 +303,11 @@ fn dedup_cluster(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> Hash
     connected_components_to_filter(connected_components_values_undirected(&graph), map)
 }
 
-fn dedup_directional(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> HashSet<&BString> {
+fn dedup_directional(
+    map: &HashMap<BString, UmiGroupInfo>,
+    max_hamming: u64,
+    lower_count_offset: isize,
+) -> HashSet<&BString> {
     //create a undirected graph with edges where the hamming distance is leq than max_hamming
     //then find connected components
     //
@@ -314,10 +325,18 @@ fn dedup_directional(map: &HashMap<BString, UmiGroupInfo>, max_hamming: u64) -> 
             .filter(move |umi2| umi1 < *umi2)
             .map(move |umi2| (umi1, umi2))
     }) {
-        let counts_1 = map.get(umi1).map_or(0, |info| info.count);
-        let counts_2 = map.get(umi2).map_or(0, |info| info.count);
-        let a_exceeds_b = counts_1 >= (2 * counts_2) - 1;
-        let b_exceeds_a = counts_2 >= (2 * counts_1) - 1;
+        let counts_1: isize = map
+            .get(umi1)
+            .map_or(0, |info| info.count)
+            .try_into()
+            .expect("counts exceeded isize");
+        let counts_2: isize = map
+            .get(umi2)
+            .map_or(0, |info| info.count)
+            .try_into()
+            .expect("counts exceeded isize");
+        let a_exceeds_b = counts_1 >= (2 * counts_2) + lower_count_offset;
+        let b_exceeds_a = counts_2 >= (2 * counts_1) + lower_count_offset;
 
         if a_exceeds_b || b_exceeds_a {
             let dist = bio::alignment::distance::hamming(umi1, umi2);
@@ -447,4 +466,46 @@ pub fn connected_components_values_directed<N: Clone, E>(graph: &Graph<N, E>) ->
     }
 
     components
+}
+
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
+
+    use bstr::BString;
+
+    use super::{dedup_directional, UmiGroupInfo};
+
+        /// test that directional is +- equivalent to RSEC, based on the example given in the
+        /// BD Rhapsody™ Sequence Analysis Pipeline User's Guide
+    fn test_directional_is_rsec() {
+        let mut map: HashMap<BString, UmiGroupInfo> = HashMap::new();
+        let mut insert = |umi: &[u8], count: usize| {
+            map.insert(
+                umi.into(),
+                UmiGroupInfo {
+                    best_read_index: 0,
+                    best_mapping_quality: super::MappingQuality {
+                        no_of_alignments: 1,
+                        mapq: 60,
+                    },
+                    count,
+                },
+            );
+        };
+        insert(b"GTCAAATT", 3);
+        insert(b"GTCAAAAT", 24);
+        insert(b"GTCAAAAA", 74);
+        insert(b"TTCAAAAA", 153);
+        insert(b"TTCAGAAA", 1);
+        insert(b"CTCAAAAA", 2);
+        insert(b"TTCAAAAT", 4);
+        insert(b"TTCAAACT", 1);
+        insert(b"TTCGGACA", 88);
+        let actual = dedup_directional(&map, 1, -1);
+        assert!(actual.contains::<BString>(&(b"TTCAAAAA".into())));
+        assert!(actual.contains::<BString>(&(b"TTCGGACA".into())));
+        assert_eq!(actual.len(), 2);
+        //todo check numbers
+    }
 }

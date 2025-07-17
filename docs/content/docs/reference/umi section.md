@@ -33,22 +33,23 @@ buckets are further split by (corrected) cell barcode.
 
 What makes a UMI a duplicate?
 
+### unique
+
 Default is `unique`, which means every UMI is counted (once).
 
-The further options are 
 
-## percentile
+### percentile
 
 UMIS that have a count below 1% of the median of the UMis within the bucket are considered duplicates.
 
-(umi-tools: `percentile`)
+(umi-tools: [`percentile`](https://umi-tools.readthedocs.io/en/latest/the_methods.html))
 
-## Cluster
+### Cluster
 
 All UMIs that are within `max_distance = ...` (Hamming) of each other are considered duplicates.
 (The chosen read for the annotated.bam is one from the UMI with the highest count).
 
-(umi-tools: `cluster`, STARSolo: `1MM_all`)
+(umi-tools: [`cluster`](https://umi-tools.readthedocs.io/en/latest/the_methods.html), STARSolo: `1MM_all`)
 
 # Directional
 
@@ -57,15 +58,21 @@ Form networks with edges defined based on hamming distance threshold
 
 Each connected component is considered a UMI group. 
 
-TODO: implement
 
-(umi-tools: `1MM_Directional`, STARSolo: `1MM_Directional_UMItools`)
+(umi-tools: [`1MM_Directional`](https://umi-tools.readthedocs.io/en/latest/the_methods.html),
+STARSolo: `1MM_Directional_UMItools`)
 
-# 1MM_Directional STAR
+# Directional_STARSolo
 
-TODO: Figure out what star is doing. Probably a different edge filter
+Form networks with edges defined based on hamming distance threshold
+(`max_distance = ...`) and `node A counts >= (2 * node B counts) - 0`.
 
+Each connected component is considered a UMI group. 
+
+Described by STARSolo as a "same as 1MM_Directional_UMItools [see above], but with more stringent criteria for duplicate UMIs"
+
+(StarSolo: `1MM_Directional`)
 
     
 
-TODO: Umi-tools like options. StarSolo has 1MM_all, 1MM_Directional, 1MM_Directional_UMItools
+TODO: Umi-tools like options. StarSolo has 1MM_all, 

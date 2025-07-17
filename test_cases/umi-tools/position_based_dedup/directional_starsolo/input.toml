@@ -1,0 +1,29 @@
+# I manually verifyied that this is essentially only different in 1=1 umis from directionaly.
+# on the directional dataset.
+[input]
+	bam = "input_chr19.bam"
+	correct_reads_for_clipping = true # since this is umi-tools
+
+
+[input.source]
+   mode ="bam_references"
+
+[umi]
+	bucket ='PerPosition'
+	strategy.kind = "directional_starsolo"
+	strategy.max_distance = 1
+
+[umi.extract]
+    mode = "SearchInName"
+	search = "_"
+	skip = 0
+	length = 5
+
+[output]
+	directory = 'output'
+    counts = false
+	write_annotated_bam  = true
+	# counts = false TODO
+
+
+
