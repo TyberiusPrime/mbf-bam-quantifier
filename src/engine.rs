@@ -953,9 +953,9 @@ impl Engine {
             0u32
         };
         let aggregated = pool.install(|| {
-            let result: Vec<Result<()>> = chunks
+            let result: Result<()> = chunks
                 .into_par_iter()
-                .map(|chunk| -> Result<()> {
+                .try_for_each(|chunk| -> Result<()> {
                     {
                         let mut bam =
                             crate::io::open_indexed_bam(bam_filename, index_filename).unwrap();
@@ -1085,14 +1085,12 @@ impl Engine {
                         }
                     }
                     Ok(())
-                })
-                .collect();
+                });
             result
         });
 
-        if aggregated.iter().any(|r| r.is_err()) {
-            let errors: Vec<_> = aggregated.into_iter().filter_map(Result::err).collect();
-            bail!("Errors occurred during quantification: {:?}", errors);
+        if let Err(err) = aggregated{
+            bail!("Errors occurred during quantification: {:?}", err);
         }
 
         let output = Arc::into_inner(self.output).context("Failed to retrieve output from arc")?;
