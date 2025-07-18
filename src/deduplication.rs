@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use bstr::BString;
+use itertools::Itertools;
 use log::info;
 use petgraph::graph::{Graph, UnGraph};
 use std::{
@@ -351,23 +352,11 @@ fn dedup_directional(
         let node_index = graph.add_node((umi.clone(), info.count as u64));
         nodes.insert(umi.clone(), node_index);
     }
-    for (umi1, umi2) in map.keys().flat_map(|umi1| {
-        map.keys()
-            .filter(move |umi2| umi1 < *umi2)
-            .map(move |umi2| (umi1, umi2))
-    }) {
-        let counts_1: isize = map
-            .get(umi1)
-            .map_or(0, |info| info.count)
-            .try_into()
-            .expect("counts exceeded isize");
-        let counts_2: isize = map
-            .get(umi2)
-            .map_or(0, |info| info.count)
-            .try_into()
-            .expect("counts exceeded isize");
-        let a_exceeds_b = counts_1 >= (2 * counts_2) + lower_count_offset;
-        let b_exceeds_a = counts_2 >= (2 * counts_1) + lower_count_offset;
+    for ((umi1, info1), (umi2, info2)) in map.iter().cartesian_product(map.iter()) {
+        let counts1 = info1.count as isize;
+        let counts2 = info2.count as isize;
+        let a_exceeds_b = counts1 >= (2 * counts2) + lower_count_offset;
+        let b_exceeds_a = counts2 >= (2 * counts1) + lower_count_offset;
 
         if a_exceeds_b || b_exceeds_a {
             let dist = bio::alignment::distance::hamming(umi1, umi2);
