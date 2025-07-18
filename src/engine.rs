@@ -1,5 +1,6 @@
 use bstr::BString;
 use ex::Wrapper;
+use log::info;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -127,7 +128,7 @@ pub fn build_trees_from_gtf_merged(
 
 #[derive(Debug, Clone)]
 pub struct DuplicateReadInfo {
-    corrected_position: i32, // clipping corrected position. Samspec is limited to 0..2^31-1,
+    pub corrected_position: i32, // clipping corrected position. Samspec is limited to 0..2^31-1,
 }
 
 #[derive(Debug, Clone)]
@@ -157,8 +158,8 @@ impl AnnotatedRead {
 
 #[derive(Debug, Clone)]
 pub struct Hits {
-    correct: Vec<string_interner::symbol::SymbolU32>,
-    reverse: Vec<string_interner::symbol::SymbolU32>,
+    pub correct: Vec<string_interner::symbol::SymbolU32>,
+    pub reverse: Vec<string_interner::symbol::SymbolU32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1045,6 +1046,7 @@ impl Engine {
                             }
                             current_pos = next_pos;
                         }
+                        info!("Done all blocks");
                         //capture eventual remaining blocks
                         for (done_pos, block) in read_catcher.into_iter() {
                             if debug_processed_positions.contains(&done_pos) {
@@ -1062,6 +1064,7 @@ impl Engine {
                                 }
                             }
 
+                            info!("calling capture_read_block");
                             self.capture_read_block(
                                 block,
                                 &mut output_catcher,
@@ -1148,6 +1151,7 @@ impl Engine {
                 &mut read_block.dedup_storage_reverse,
             ),
         ] {
+            info!("calling finish_bucket");
             dedup_storage.finish_bucket(block, dedup_mode);
             if let Some(external_command) = self
                 .umi_config

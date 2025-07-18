@@ -4,12 +4,16 @@ use log::info;
 use petgraph::graph::{Graph, UnGraph};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    io::Write, path::PathBuf,
+    io::Write,
+    path::PathBuf,
 };
 
 use rust_htslib::bam;
 
-use crate::{bam_ext::BamRecordExtensions, engine};
+use crate::{
+    bam_ext::BamRecordExtensions,
+    engine::{self, AnnotatedRead, DuplicateReadInfo},
+};
 
 #[derive(serde::Deserialize, Debug, Clone, strum_macros::Display, Default)]
 pub enum DeduplicationBucket {
@@ -183,6 +187,7 @@ impl DedupPerBucket {
         reads: &mut Vec<(engine::AnnotatedRead, usize)>,
         mode: DeduplicationMode,
     ) {
+        info!("called finish_bucket");
         match self {
             &mut DedupPerBucket::None => {}
             &mut DedupPerBucket::Umi(ref mut map) => {
@@ -201,52 +206,31 @@ impl DedupPerBucket {
         map: &mut HashMap<BString, UmiGroupInfo>,
         reads: &mut Vec<(engine::AnnotatedRead, usize)>,
     ) {
+        info!("called subbucket");
         match mode {
-            DeduplicationMode::NoDedup | DeduplicationMode::Unique => {}
+            DeduplicationMode::NoDedup | DeduplicationMode::Unique =>
+                //we already have filtered unique in accept_read()
+                {}
             DeduplicationMode::Percentile => {
-                let filter = dedup_percentile(map); //does not change couns
-                filter_reads_with_those_umis(reads, filter)
+                dedup_percentile(map, reads); //does not change couns
             }
             DeduplicationMode::Cluster(max_hamming) => {
-                let (filter, updated_counts) = dedup_cluster(map, max_hamming.max_distance);
-                filter_reads_with_those_umis(reads, filter);
-                update_umi_counts(map, updated_counts);
+                dedup_cluster(map, reads, max_hamming.max_distance);
             }
             DeduplicationMode::Directional(max_hamming) => {
-                let (filter, updated_counts) = dedup_directional(map, max_hamming.max_distance, -1);
-                filter_reads_with_those_umis(reads, filter);
-                update_umi_counts(map, updated_counts);
+                dedup_directional(map, reads, max_hamming.max_distance, -1);
             }
             DeduplicationMode::DirectionalStarsolo(max_hamming) => {
-                let (filter, updated_counts) = dedup_directional(map, max_hamming.max_distance, 0);
-                filter_reads_with_those_umis(reads, filter);
-                update_umi_counts(map, updated_counts);
+                dedup_directional(map, reads, max_hamming.max_distance, 0);
             }
         }
     }
 }
 
-fn filter_reads_with_those_umis(
+fn dedup_percentile(
+    map: &HashMap<BString, UmiGroupInfo>,
     reads: &mut Vec<(engine::AnnotatedRead, usize)>,
-    filter: HashSet<&BString>,
 ) {
-    for (read, _org_index) in reads.iter_mut() {
-        match read {
-            engine::AnnotatedRead::Counted(info) => {
-                if let Some(umi) = info.umi.as_ref() {
-                    if filter.contains(umi) {
-                        *read = engine::AnnotatedRead::new_approximate_duplicate(
-                            info.corrected_position,
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn dedup_percentile(map: &HashMap<BString, UmiGroupInfo>) -> HashSet<&BString> {
     {
         //UMI. UMIs with counts < 1% of the median counts for UMIs at the same position are ignored.
         const _: () = assert!(
@@ -260,40 +244,54 @@ fn dedup_percentile(map: &HashMap<BString, UmiGroupInfo>) -> HashSet<&BString> {
                                     //the const assert above should have exploded
             )
             .collect();
-        if counts.len() == 1 {
-            return HashSet::new();
-        }
-        let medians = medians::medianu64(&mut counts[..]).unwrap_or(medians::Medians::Odd(&0));
-        let median = match medians {
-            medians::Medians::Odd(m) => *m,
-            medians::Medians::Even((m1, m2)) => (m1 + m2) / 2,
-        };
+        if counts.len() > 1 {
+            let medians = medians::medianu64(&mut counts[..]).unwrap_or(medians::Medians::Odd(&0));
+            let median = match medians {
+                medians::Medians::Odd(m) => *m,
+                medians::Medians::Even((m1, m2)) => (m1 + m2) / 2,
+            };
 
-        let threshold = median / 100; //rounds towards 0, so should be fine.
-        if counts.iter().any(|x| *x > 1) {
-            dbg!(&counts);
-            dbg!(median);
-            dbg!(&threshold);
+            let threshold = median / 100; //rounds towards 0, so should be fine.
+            for (_umi, info) in map.iter() {
+                if info.count < threshold {
+                    set_read_aproximate_duplicate(reads, info.best_read_index);
+                }
+            }
         }
-        let filter: HashSet<_> = map
-            .iter()
-            .filter(|(_k, v)| (v.count as u64) <= threshold)
-            .map(|(k, _v)| k)
-            .collect();
-        filter
+    }
+}
+
+fn set_read_aproximate_duplicate(reads: &mut Vec<(engine::AnnotatedRead, usize)>, index: usize) {
+    let old = &reads[index];
+    match &old.0 {
+        AnnotatedRead::Counted(old_info) => {
+            reads[index] = (
+                engine::AnnotatedRead::ApproximateUmiDuplicate(Box::new(DuplicateReadInfo {
+                    corrected_position: old_info.corrected_position,
+                })),
+                reads[index].1,
+            );
+        }
+        AnnotatedRead::ApproximateUmiDuplicate(_) => {
+            // we can reach this if there are multiple ways in a directional graph
+            // leading to this one.
+        }
+        _ => {
+            unreachable!();
+        }
     }
 }
 
 fn dedup_cluster(
-    map: &HashMap<BString, UmiGroupInfo>,
+    map: &mut HashMap<BString, UmiGroupInfo>,
+    reads: &mut Vec<(engine::AnnotatedRead, usize)>,
     max_hamming: u64,
-) -> (HashSet<&BString>, HashMap<BString, u64>) {
+) {
     if map.len() < 2 {
-        return (HashSet::new(), HashMap::new()); //no need to cluster if there is only one UMI
-                                                 //TODO: push upward.
+        return;
     }
-    let mut graph = UnGraph::<&BString, u64>::new_undirected(); //todo: do not store edge
-                                                                //weights...
+    let mut graph = UnGraph::<&BString, ()>::new_undirected(); //todo: do not store edge
+                                                               //weights...
     let mut nodes = HashMap::new();
     for (umi, _info) in map.iter() {
         let node_index = graph.add_node(umi);
@@ -308,28 +306,52 @@ fn dedup_cluster(
         if dist <= max_hamming {
             let node1 = nodes.get(umi1).expect("UMI should be in the graph");
             let node2 = nodes.get(umi2).expect("UMI should be in the graph");
-            graph.add_edge(*node1, *node2, dist);
+            graph.add_edge(*node1, *node2, ());
         }
     }
-    connected_components_to_filter(connected_components_values_undirected(&graph), map)
+    let connected_components = connected_components_values_undirected(&graph);
+    for group in connected_components.iter() {
+        if group.len() > 1 {
+            //find the one with the highest count...
+            let max_umi = group
+                .iter()
+                .max_by_key(|&umi| {
+                    map.get(umi).map_or(0, |info| info.count as u64) //if umi not in map, count is 0
+                })
+                .expect("There should be at least one UMI in the group");
+            //and clear all the others
+            let mut add = 0;
+            for umi in group.iter() {
+                if umi != max_umi {
+                    let this_info = &mut map.get_mut(umi).unwrap();
+                    add += this_info.count;
+                    this_info.count = 0;
+                    set_read_aproximate_duplicate(reads, this_info.best_read_index);
+                }
+            }
+            //don't froget to add to the max_umi
+            map.get_mut(max_umi).unwrap().count += add;
+        }
+    }
 }
 
 fn dedup_directional(
-    map: &HashMap<BString, UmiGroupInfo>,
+    map: &mut HashMap<BString, UmiGroupInfo>,
+    reads: &mut Vec<(engine::AnnotatedRead, usize)>,
     max_hamming: u64,
     lower_count_offset: isize,
-) -> (HashSet<&BString>, HashMap<BString, u64>) {
+) {
     //create a undirected graph with edges where the hamming distance is leq than max_hamming
     //then find connected components
     //
     if map.len() < 2 {
-        return (HashSet::new(), HashMap::new()); //no need to cluster if there is only one UMI
+        return;
     }
-    let mut graph = Graph::<(&BString, u64), ()>::new();
+    let mut graph = Graph::<(BString, u64), ()>::new();
     let mut nodes = HashMap::new();
     for (umi, info) in map.iter() {
-        let node_index = graph.add_node((umi, info.count as u64));
-        nodes.insert(umi, node_index);
+        let node_index = graph.add_node((umi.clone(), info.count as u64));
+        nodes.insert(umi.clone(), node_index);
     }
     for (umi1, umi2) in map.keys().flat_map(|umi1| {
         map.keys()
@@ -368,7 +390,7 @@ fn dedup_directional(
 
     let mut umis_sorted_by_count = map
         .iter()
-        .map(|(umi, info)| (umi, info.count, nodes.get(umi).unwrap()))
+        .map(|(umi, info)| (umi.clone(), info.count, nodes.get(umi).unwrap()))
         .collect::<Vec<_>>();
     //we need to sort by count, and on ties by the umi.
     //(Can't use by_key for lifetime reasons)
@@ -376,63 +398,31 @@ fn dedup_directional(
         count2.cmp(count1).then(umi1.cmp(umi2))
     });
 
-    let mut filter = HashSet::new();
-    let mut update_counts = HashMap::new();
+    let mut processed = HashSet::new();
     for (umi, _count, node_index) in umis_sorted_by_count {
-        if !filter.contains(umi) {
+        if !processed.contains(&umi) {
             //identify and prune all reachable from this node.
             let mut add = 0;
             let mut seen = false;
             petgraph::visit::depth_first_search(&graph, Some(*node_index), |event| match event {
                 petgraph::visit::DfsEvent::Discover(n, _) => {
-                    let (connected_umi, umi_count) = graph[n];
-                    if connected_umi != umi {
-                        filter.insert(connected_umi);
-                        update_counts.insert((connected_umi).clone(), 0); //remove counts from this umi
+                    let (connected_umi, umi_count) = &graph[n];
+                    if *connected_umi != umi {
+                        processed.insert(connected_umi);
                         add += umi_count;
+                        let info = map.get_mut(connected_umi).unwrap();
+                        info.count = 0; //set to 0, so it will be removed.
+                        set_read_aproximate_duplicate(reads, info.best_read_index);
                         seen = true;
                     }
                 }
                 _ => {}
             });
             if seen {
-                add += map.get(umi).map(|info| info.count as u64).unwrap_or(0);
-                update_counts.insert(umi.clone(), add);
+                map.get_mut(&umi).unwrap().count += add;
             }
         }
     }
-    (filter, update_counts)
-}
-
-fn connected_components_to_filter<'a>(
-    connected_components: Vec<Vec<&'a BString>>,
-    map: &'a HashMap<BString, UmiGroupInfo>,
-) -> (HashSet<&'a BString>, HashMap<BString, u64>) {
-    let mut filter = HashSet::new();
-    let mut update_counts = HashMap::new();
-
-    for group in connected_components.iter() {
-        if group.len() > 1 {
-            //find the one with the highest count...
-            let max_umi = group
-                .iter()
-                .max_by_key(|&&umi| {
-                    map.get(umi).map_or(0, |info| info.count as u64) //if umi not in map, count is 0
-                })
-                .expect("There should be at least one UMI in the group");
-            //and add all others to our filter set
-            let mut add = map.get(*max_umi).map(|info| info.count as u64).unwrap();
-            for umi in group.iter() {
-                if umi != max_umi {
-                    filter.insert(*umi);
-                    add += map.get(*umi).map(|info| info.count as u64).unwrap();
-                    update_counts.insert((*umi).clone(), 0); //remove counts from this umi
-                }
-            }
-            update_counts.insert((**max_umi).clone(), add);
-        }
-    }
-    (filter, update_counts)
 }
 
 fn update_umi_counts(
@@ -446,7 +436,9 @@ fn update_umi_counts(
 }
 
 /// Returns a vector of components, each as a Vec<N> of node values.
-pub fn connected_components_values_undirected<N: Clone, E>(graph: &UnGraph<N, E>) -> Vec<Vec<N>> {
+pub fn connected_components_values_undirected<E>(
+    graph: &UnGraph<&BString, E>,
+) -> Vec<Vec<BString>> {
     let mut visited = HashSet::new();
     let mut components = Vec::new();
 
@@ -625,11 +617,12 @@ mod test {
     #[test]
     fn test_directional_is_rsec() {
         let mut map: HashMap<BString, UmiGroupInfo> = HashMap::new();
+        let mut reads: Vec<(super::engine::AnnotatedRead, usize)> = Vec::new();
         let mut insert = |umi: &[u8], count: usize| {
             map.insert(
                 umi.into(),
                 UmiGroupInfo {
-                    best_read_index: 0,
+                    best_read_index: reads.len(),
                     best_mapping_quality: super::MappingQuality {
                         no_of_alignments: 1,
                         mapq: 60,
@@ -637,6 +630,20 @@ mod test {
                     count: count.try_into().expect("count should fit into u64"),
                 },
             );
+            reads.push((
+                super::engine::AnnotatedRead::Counted(Box::new(super::engine::AnnotatedReadInfo {
+                    corrected_position: 0, // clipping corrected position. Samspec is limited to 0..2^31-1,
+                    hits: crate::engine::Hits {
+                        correct: Vec::new(),
+                        reverse: Vec::new(),
+                    },
+                    umi: Some(umi.into()), // Optional: What's it's UMI. 24 bytes
+                    barcode: None,         // Optional: What's it's cell-barcode 24 bytes
+                    mapping_priority: (0, 0),
+                    reverse: false,
+                })),
+                reads.len(),
+            ));
         };
         insert(b"GTCAAATT", 3);
         insert(b"GTCAAAAT", 24);
@@ -647,20 +654,23 @@ mod test {
         insert(b"TTCAAAAT", 4);
         insert(b"TTCAAACT", 1);
         insert(b"TTCGGACA", 88);
-        let (filter, update_counts) = dedup_directional(&map, 1, -1);
-        //super::filter_reads_with_those_umis(reads, filter);
-        dbg!(&update_counts);
-        assert_eq!(update_counts.len(), 8);
-
-        assert!(!filter.contains::<BString>(&(b"TTCAAAAA".into())));
-        assert!(!filter.contains::<BString>(&(b"TTCGGACA".into())));
-        assert_eq!(filter.len(), 7);
-        super::update_umi_counts(&mut map, update_counts);
+        dedup_directional(&mut map, &mut reads, 1, -1);
         assert_eq!(
             map.get::<BString>(&(b"TTCAAAAA".into())).unwrap().count,
             262
         );
         assert_eq!(map.get::<BString>(&(b"TTCGGACA".into())).unwrap().count, 88);
+
+        let pruned_read_count = reads
+            .iter()
+            .filter(|(read, _index)| {
+                matches!(
+                    read,
+                    super::engine::AnnotatedRead::ApproximateUmiDuplicate(_)
+                )
+            })
+            .count();
+        assert_eq!(pruned_read_count, 9 - 2); //since I only add one read per umi here...
 
         assert_eq!(
             map.get::<BString>(&(b"TTCAAACT".into())).unwrap().count,
