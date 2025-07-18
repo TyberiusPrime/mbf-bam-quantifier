@@ -142,6 +142,7 @@ pub enum AnnotatedRead {
     NoBarcode,
     NoUMI,
     BarcodeNotInWhitelist(Vec<u8>),
+    RemovedByExternalUmiTreshold,
 }
 
 impl AnnotatedRead {
@@ -256,6 +257,7 @@ impl CounterPerChunk {
 
                         AnnotatedRead::NoUMI => "no_umi",
                         AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_allowlist",
+                        AnnotatedRead::RemovedByExternalUmiTreshold => "removed_by_umi_threshold",
                     };
                     if count_as != "overfetch" {
                         //todo: preinsert values
@@ -300,6 +302,7 @@ impl CounterPerChunk {
 
                         AnnotatedRead::NoUMI => "no_umi",
                         AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_allowlist",
+                        AnnotatedRead::RemovedByExternalUmiTreshold => "removed_by_umi_threshold",
                     };
                     if count_as != "overfetch" {
                         //todo: preinsert values
@@ -399,6 +402,7 @@ impl Output {
             ("no_umi", 0),
             ("barcode_not_in_allowlist", 0),
             ("filtered", 0),
+            ("removed_by_umi_threshold", 0),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -720,6 +724,10 @@ impl Output {
     }
 }
 
+///per captured position.
+///Might be a bam coordinate.
+///Might be a reference or Gene
+///(which we encode in out-of-chunk coordinates).
 struct PerPosition {
     reads_forward: Vec<(AnnotatedRead, usize)>,
     reads_reverse: Vec<(AnnotatedRead, usize)>,
@@ -1032,6 +1040,7 @@ impl Engine {
                                     block,
                                     &mut output_catcher,
                                     idx_to_annotation_decision.as_mut(),
+                                    &interner,
                                 )?;
                             }
                             current_pos = next_pos;
@@ -1057,6 +1066,7 @@ impl Engine {
                                 block,
                                 &mut output_catcher,
                                 idx_to_annotation_decision.as_mut(),
+                                &interner,
                             )?;
                         }
 
@@ -1089,7 +1099,7 @@ impl Engine {
             result
         });
 
-        if let Err(err) = aggregated{
+        if let Err(err) = aggregated {
             bail!("Errors occurred during quantification: {:?}", err);
         }
 
@@ -1120,6 +1130,7 @@ impl Engine {
         mut read_block: PerPosition,
         output_cacher: &mut CounterPerChunk,
         mut idx_to_annotated: Option<&mut HashMap<usize, AnnotatedRead>>,
+        interner: &OurInterner,
     ) -> Result<()> {
         let dedup_mode = self
             .umi_config
@@ -1138,6 +1149,19 @@ impl Engine {
             ),
         ] {
             dedup_storage.finish_bucket(block, dedup_mode);
+            if let Some(external_command) = self
+                .umi_config
+                .as_ref()
+                .and_then(|x| x.external_umi_thresholder_command.as_ref())
+            {
+                let title = find_first_hit_gene(&block, &interner);
+                crate::deduplication::apply_external_threshold(
+                    external_command,
+                    &title,
+                    block,
+                    dedup_storage,
+                )?;
+            }
 
             output_cacher
                 .count_reads(&block)
@@ -1499,6 +1523,10 @@ impl Engine {
 
                     AnnotatedRead::NoUMI => {
                         read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(6))?;
+                    }
+
+                    AnnotatedRead::RemovedByExternalUmiTreshold => {
+                        read.replace_aux(b"XF", rust_htslib::bam::record::Aux::U8(8))?;
                     }
                     AnnotatedRead::Counted(info) => {
                         //we have a read that was annotated
@@ -2018,6 +2046,22 @@ fn apply_count_strategy(
     }
     gg_len.into_keys().collect()
 }
+
+///find the first gene hit from AlignedReads
+fn find_first_hit_gene(reads: &Vec<(AnnotatedRead, usize)>, interner: &OurInterner) -> String {
+    for (read, _) in reads.iter() {
+        if let AnnotatedRead::Counted(info) = read {
+            if !info.hits.correct.is_empty() {
+                return interner
+                    .resolve(info.hits.correct[0])
+                    .unwrap()
+                    .to_string();
+            }
+        }
+    }
+    String::new() // no hits found
+}
+
 #[cfg(test)]
 mod test {
     #[test]

@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::{
     barcodes::CellBarcodes,
     deduplication::{DeduplicationBucket, DeduplicationMode},
-    extractors::{Extractor},
+    extractors::Extractor,
     filters::ReadFilter,
 };
 
@@ -213,16 +213,30 @@ pub struct Output {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct UmiConfig {
     #[serde(alias = "extract")]
     pub extractor: Extractor,
     pub strategy: DeduplicationMode,
     pub bucket: DeduplicationBucket,
+    #[serde(default)]
+    pub external_umi_thresholder_command: Option<Vec<String>>,
 }
 
 impl UmiConfig {
     fn check(&self, _config: &Config) -> Result<()> {
         //self.extractor.check(config)?;
+        if let Some(ec) = self.external_umi_thresholder_command.as_ref() {
+            match self.bucket {
+                DeduplicationBucket::PerPosition => {
+                    panic!("external_umi_thresholder_command correction requires per-biomolecule deduplication, either with the PerRegion or the PerReference mode.");
+                }
+                DeduplicationBucket::PerReference | DeduplicationBucket::PerRegion => {}
+            }
+            if ec.is_empty() {
+                bail!("external_umi_thresholder_command must not be empty if specified.");
+            }
+        }
         Ok(())
     }
 }
@@ -242,8 +256,7 @@ impl Config {
         } else {
             if let Some(true) = self.input.correct_reads_for_clipping {
                 bail!("correct_reads_for_clipping is only meaningful if UMI deduplication is activated.");
-            }
-            else {
+            } else {
                 self.input.correct_reads_for_clipping = Some(false);
             }
         }

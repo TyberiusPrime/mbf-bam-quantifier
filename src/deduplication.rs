@@ -1,6 +1,11 @@
+use anyhow::{bail, Context, Result};
 use bstr::BString;
+use log::info;
 use petgraph::graph::{Graph, UnGraph};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    io::Write, path::PathBuf,
+};
 
 use rust_htslib::bam;
 
@@ -15,7 +20,6 @@ pub enum DeduplicationBucket {
     PerReference,
     #[serde(alias = "per_region")]
     PerRegion,
-
 }
 
 #[derive(serde::Deserialize, Debug, Clone, Copy)]
@@ -204,19 +208,19 @@ impl DedupPerBucket {
                 filter_reads_with_those_umis(reads, filter)
             }
             DeduplicationMode::Cluster(max_hamming) => {
-                let (filter, add_counts) = dedup_cluster(map, max_hamming.max_distance);
+                let (filter, updated_counts) = dedup_cluster(map, max_hamming.max_distance);
                 filter_reads_with_those_umis(reads, filter);
-                update_umi_counts(map, add_counts);
+                update_umi_counts(map, updated_counts);
             }
             DeduplicationMode::Directional(max_hamming) => {
-                let (filter, add_counts) = dedup_directional(map, max_hamming.max_distance, -1);
+                let (filter, updated_counts) = dedup_directional(map, max_hamming.max_distance, -1);
                 filter_reads_with_those_umis(reads, filter);
-                update_umi_counts(map, add_counts);
+                update_umi_counts(map, updated_counts);
             }
             DeduplicationMode::DirectionalStarsolo(max_hamming) => {
-                let (filter, add_counts) = dedup_directional(map, max_hamming.max_distance, 0);
+                let (filter, updated_counts) = dedup_directional(map, max_hamming.max_distance, 0);
                 filter_reads_with_those_umis(reads, filter);
-                update_umi_counts(map, add_counts);
+                update_umi_counts(map, updated_counts);
             }
         }
     }
@@ -378,17 +382,21 @@ fn dedup_directional(
         if !filter.contains(umi) {
             //identify and prune all reachable from this node.
             let mut add = 0;
+            let mut seen = false;
             petgraph::visit::depth_first_search(&graph, Some(*node_index), |event| match event {
                 petgraph::visit::DfsEvent::Discover(n, _) => {
                     let (connected_umi, umi_count) = graph[n];
                     if connected_umi != umi {
                         filter.insert(connected_umi);
+                        update_counts.insert((connected_umi).clone(), 0); //remove counts from this umi
                         add += umi_count;
+                        seen = true;
                     }
                 }
                 _ => {}
             });
-            if add > 0 {
+            if seen {
+                add += map.get(umi).map(|info| info.count as u64).unwrap_or(0);
                 update_counts.insert(umi.clone(), add);
             }
         }
@@ -401,7 +409,7 @@ fn connected_components_to_filter<'a>(
     map: &'a HashMap<BString, UmiGroupInfo>,
 ) -> (HashSet<&'a BString>, HashMap<BString, u64>) {
     let mut filter = HashSet::new();
-    let mut count_updates = HashMap::new();
+    let mut update_counts = HashMap::new();
 
     for group in connected_components.iter() {
         if group.len() > 1 {
@@ -413,17 +421,18 @@ fn connected_components_to_filter<'a>(
                 })
                 .expect("There should be at least one UMI in the group");
             //and add all others to our filter set
-            let mut add = 0;
+            let mut add = map.get(*max_umi).map(|info| info.count as u64).unwrap();
             for umi in group.iter() {
                 if umi != max_umi {
                     filter.insert(*umi);
                     add += map.get(*umi).map(|info| info.count as u64).unwrap();
+                    update_counts.insert((*umi).clone(), 0); //remove counts from this umi
                 }
             }
-            count_updates.insert((**max_umi).clone(), add);
+            update_counts.insert((**max_umi).clone(), add);
         }
     }
-    (filter, count_updates)
+    (filter, update_counts)
 }
 
 fn update_umi_counts(
@@ -432,7 +441,7 @@ fn update_umi_counts(
 ) {
     for (umi, count) in updated_counts {
         let info = map.get_mut(&umi).unwrap();
-        info.count += count;
+        info.count = count;
     }
 }
 
@@ -495,6 +504,114 @@ pub fn connected_components_values_directed<N: Clone, E>(graph: &Graph<N, E>) ->
     components
 }
 
+/// the BD inspired 'distribution based error correction' for UMIs counts.
+/// essentially: Per biomolecule (not per cell!):
+/// If enough UMIs are present at high enough levels ((average depth of those not 0) >= 4 )
+/// fit two binomial distributions. Calculate a threshold between them, and then remove all
+/// molecules that are below the threshold.
+pub fn apply_external_threshold(
+    command: &Vec<String>,
+    title: &str,
+    block: &mut Vec<(engine::AnnotatedRead, usize)>,
+    dedup_storage: &mut DedupPerBucket,
+) -> Result<()> {
+    let mut umi_counts: Vec<u64> = Vec::new();
+    let mut per_umi_counts: HashMap<&BString, u64> = HashMap::new();
+    match dedup_storage {
+        DedupPerBucket::None => {
+            unreachable!("prevented by config check")
+        }
+        DedupPerBucket::Umi(counts) => {
+            umi_counts.extend(counts.values().map(|info| info.count));
+            per_umi_counts.extend(counts.iter().map(|(umi, info)| (umi, info.count)));
+        }
+        DedupPerBucket::SingleCell(per_barcode_counts) => {
+            for (_barcode, counts) in per_barcode_counts.iter_mut() {
+                umi_counts.extend(counts.values().map(|info| info.count));
+                for (k, info) in counts.iter() {
+                    *(per_umi_counts.entry(k).or_insert(0)) += info.count;
+                }
+            }
+        }
+    }
+    if umi_counts.is_empty() {
+        //no UMIs, nothing to do.
+        return Ok(());
+    }
+    let cmd = if command[0].starts_with('/') {
+        PathBuf::from(&command[0])
+    } else {
+        std::env::current_dir().unwrap().join(&command[0])
+    };
+    let mut process = std::process::Command::new(cmd)
+        .args(&command[1..])
+        .arg(title)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| {
+            format!(
+                "Failed to start external threshold process: {}{:?}",
+                std::env::current_dir().unwrap_or_default().display(),
+                &command,
+            )
+        })?;
+    //write comma sepearated umi_counts to stdin
+    let str_counts = umi_counts
+        .iter()
+        .filter(|x| **x > 0) // we might have 'empty' umis that were collapsed onto others in there.
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut stdin = process.stdin.take().expect("failed to get stdin");
+    //dbg!(&str_counts);
+    stdin
+        .write_all(str_counts.as_bytes())
+        .context("Failed to write to stdin of external threshold process")?;
+    drop(stdin);
+    //collect stdout and stderr
+    let output = process
+        .wait_with_output()
+        .context("Failed to wait for external threshold process")?;
+    if !output.status.success() {
+        bail!(
+            "External threshold process failed with status: {}. Stderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .context("Failed to read stdout of external threshold process, not utf-8")?;
+    //parse the output as a single number
+    let threshold: u64 = stdout.trim().parse().with_context(|| {
+        format!(
+            "Failed to parse threshold from external threshold process output. Stdout was {stdout}, stderr was:{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })?;
+    info!("The externally defined UMI min-coverage threshold for {title} is {threshold}");
+    //dbg!("External threshold:", threshold);
+
+    let umis_to_filter: HashSet<&BString> = per_umi_counts
+        .iter()
+        .filter(|(_umi, count)| **count < threshold)
+        .map(|(umi, _count)| *umi)
+        .collect();
+
+    for read in block.iter_mut() {
+        if let engine::AnnotatedRead::Counted(info) = &mut read.0 {
+            if let Some(umi) = info.umi.as_ref() {
+                if umis_to_filter.contains(umi) {
+                    *read = (engine::AnnotatedRead::RemovedByExternalUmiTreshold, read.1)
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
@@ -533,7 +650,7 @@ mod test {
         let (filter, update_counts) = dedup_directional(&map, 1, -1);
         //super::filter_reads_with_those_umis(reads, filter);
         dbg!(&update_counts);
-        assert_eq!(update_counts.len(), 1);
+        assert_eq!(update_counts.len(), 8);
 
         assert!(!filter.contains::<BString>(&(b"TTCAAAAA".into())));
         assert!(!filter.contains::<BString>(&(b"TTCGGACA".into())));
@@ -541,7 +658,13 @@ mod test {
         super::update_umi_counts(&mut map, update_counts);
         assert_eq!(
             map.get::<BString>(&(b"TTCAAAAA".into())).unwrap().count,
-            262 // - 153
+            262
+        );
+        assert_eq!(map.get::<BString>(&(b"TTCGGACA".into())).unwrap().count, 88);
+
+        assert_eq!(
+            map.get::<BString>(&(b"TTCAAACT".into())).unwrap().count,
+            0 // - 153
         );
 
         // that one isn't being updated

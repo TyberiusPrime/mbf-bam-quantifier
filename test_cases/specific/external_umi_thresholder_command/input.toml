@@ -1,0 +1,30 @@
+# StarSolo groups umis by gene.
+# this dataset accidentially doesn't trigger the difference between gene and position level
+# umi dedup.
+[input]
+    bam = "input_chr19_gene_tags.bam"
+	correct_reads_for_clipping = false # starsolo doesn't. 
+
+[input.source]
+	mode = 'bam_tag'
+	tag = 'XF'
+
+
+[umi]
+	strategy.kind = "directional"
+	strategy.max_distance = 1
+	bucket = "per_region"
+	external_umi_thresholder_command = ['input_threshold.py']
+
+[umi.extract]
+    mode = "regex_name"
+    regex = ":(UMI_[AGTC]+):"
+
+[strategy]
+	multi_region = 'count_both'
+	overlap ='intersection_strict'
+	direction = 'Forward'
+
+[output]
+    directory = 'output'
+    write_annotated_bam = true

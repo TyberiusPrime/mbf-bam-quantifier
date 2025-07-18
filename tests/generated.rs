@@ -113,6 +113,11 @@ fn test_case_source_reference_reference_reverse_only() {
 }
 
 #[test]
+fn test_case_specific_external_umi_thresholder_command() {
+    run_test(std::path::Path::new("test_cases/specific/external_umi_thresholder_command"));
+}
+
+#[test]
 fn test_case_specific_read_clipped_before_start() {
     run_test(std::path::Path::new("test_cases/specific/read_clipped_before_start"));
 }
