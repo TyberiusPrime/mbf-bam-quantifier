@@ -88,7 +88,7 @@ StarSolo 1MM_all, umi-tools adjancent (same thing, mabye?)
 ## external_umi_thresholder_command
 
 Some sequencing methodologies suggest running a
-thresholding on UMIs per biomolecule (.eg. DBEC in BD Rhapsody(TM)).
+thresholding on UMIs per biomolecule (e.g. DBEC in BD Rhapsody(TM)).
 
 Since these can be arbitrarily complex, we outsource these to external
 scripts, which you can specify with `external_umi_thresholder_command` (as a
@@ -97,8 +97,9 @@ list of command line arguments).
 The receiving command will receive a comma-separated-list of umi-counts
 per biomolecule on stdin.
 
-iIt is supposed to return a single (integer, > 0) number:
+It is supposed to return a single (integer, > 0) number on stdout:
 The threshold below which we'll remove the UMIs from counting.
 
-Returning anything else on stdout, or writing to stderr will result in an error
-(and an aborted quantification).
+Returning anything else on stdout will result in an error
+(and an aborted quantification). Output on stderr is ignored (but shown in case of a
+non-zero return code / a non-parsable result).
