@@ -5,6 +5,7 @@ use string_interner::symbol::SymbolU32;
 
 use crate::bam_ext::BamRecordExtensions;
 use enum_dispatch::enum_dispatch;
+use rust_htslib::bam::record::Cigar;
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub enum KeepOrRemove {
@@ -71,10 +72,13 @@ pub enum Filter {
     #[serde(alias = "UmiHomopolymer")]
     UmiHomopolymer(UmiHomopolymer),
 
-
     #[serde(alias = "umi_all_a")]
     #[serde(alias = "UMIAllA")]
     UmiAllA(UmiAllA),
+
+    #[serde(alias = "min_aligned_length")]
+    #[serde(alias = "min_aligned_len")]
+    MinAlignedLength(MinAlignedLength),
 }
 
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -254,6 +258,7 @@ impl ReadFilter for UmiHomopolymer {
         false
     }
 }
+
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
 pub struct UmiAllA {
     pub action: KeepOrRemove,
@@ -278,5 +283,37 @@ impl ReadFilter for UmiAllA {
             };
         }
         false
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct MinAlignedLength {
+    pub action: KeepOrRemove,
+    pub threshold: u32,
+}
+
+impl ReadFilter for MinAlignedLength {
+    fn remove_read_after_annotation(
+        &self,
+        read: &rust_htslib::bam::record::Record,
+        _barcode: Option<&BString>,
+        _umi: Option<&BString>,
+        _genes_hit_correct: &Vec<SymbolU32>,
+        _genes_hit_reverse: &Vec<SymbolU32>,
+        _interner: &crate::engine::OurInterner,
+    ) -> bool {
+        let aligned_count: u32 = read
+            .cigar()
+            .iter()
+            .map(|c| match c {
+                Cigar::Match(x) | Cigar::Equal(x) | Cigar::Diff(x) => *x,
+                _ => 0,
+            })
+            .sum();
+        let hit = aligned_count >= self.threshold;
+        match self.action {
+            KeepOrRemove::KeepOnly => !hit,
+            KeepOrRemove::Remove => hit,
+        }
     }
 }

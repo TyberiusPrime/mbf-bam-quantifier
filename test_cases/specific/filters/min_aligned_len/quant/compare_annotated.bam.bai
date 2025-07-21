@@ -1,0 +1,5 @@
+#!/usr/bin/env python
+import pysam
+import sys
+
+... # no test.

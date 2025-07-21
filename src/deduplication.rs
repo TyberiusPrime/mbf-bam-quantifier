@@ -187,7 +187,6 @@ impl DedupPerBucket {
         reads: &mut Vec<(engine::AnnotatedRead, usize)>,
         mode: DeduplicationMode,
     ) {
-        info!("called finish_bucket");
         match self {
             &mut DedupPerBucket::None => {}
             &mut DedupPerBucket::Umi(ref mut map) => {
@@ -206,7 +205,6 @@ impl DedupPerBucket {
         map: &mut HashMap<BString, UmiGroupInfo>,
         reads: &mut Vec<(engine::AnnotatedRead, usize)>,
     ) {
-        info!("called subbucket");
         match mode {
             DeduplicationMode::NoDedup | DeduplicationMode::Unique =>
                 //we already have filtered unique in accept_read()

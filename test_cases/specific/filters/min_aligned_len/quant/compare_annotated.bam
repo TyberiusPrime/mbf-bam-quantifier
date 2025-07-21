@@ -1,0 +1,15 @@
+#!/usr/bin/env python
+import pysam
+import sys
+
+should = sys.argv[1]
+actual = sys.argv[2]
+
+
+print(actual)
+f = pysam.Samfile(actual)
+for read in f:
+    if not read.has_tag('XF'):
+        aligned_len = sum((end - start for (start, end) in read.get_blocks()))
+        assert aligned_len >= 51
+
