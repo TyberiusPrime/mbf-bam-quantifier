@@ -178,11 +178,11 @@ pub struct Strategy {
 pub enum GTFFormat {
     #[default]
     AutoDetect,
-    #[serde(alias="gff")]
-    #[serde(alias="GFF")]
+    #[serde(alias = "gff")]
+    #[serde(alias = "GFF")]
     Gff,
-    #[serde(alias="gtf")]
-    #[serde(alias="GTF")]
+    #[serde(alias = "gtf")]
+    #[serde(alias = "GTF")]
     Gtf,
 }
 
@@ -317,7 +317,7 @@ impl Input {
             // gtfs tend to have repeated exons, when transcripts contain the same ones.
             // we filter those by default. But the way featureCounts does it
             // is to keep them, and then discard all their reads.
-            // so for featureCount parity, we need to rename themj
+            // so for featureCount parity, we need to rename them
 
             match collapse_or_rename_duplicates {
                 DuplicateHandling::Collapse => {
@@ -363,7 +363,7 @@ impl Input {
                         {
                             let key = (*start, *stop, id.clone());
                             if counter.contains_key(&key) {
-                                *id = format!("{}-{}", id, ii);
+                                *id = format!("{}-duplicate-{}", id, ii);
                                 continue;
                             }
                             counter.entry(key).and_modify(|c| *c += 1).or_insert(1);
