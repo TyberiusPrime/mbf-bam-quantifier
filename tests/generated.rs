@@ -118,6 +118,11 @@ fn test_case_specific_external_umi_thresholder_command() {
 }
 
 #[test]
+fn test_case_specific_external_umi_thresholder_command_with_barcodes() {
+    run_test(std::path::Path::new("test_cases/specific/external_umi_thresholder_command_with_barcodes"));
+}
+
+#[test]
 fn test_case_specific_filters_min_aligned_len() {
     run_test(std::path::Path::new("test_cases/specific/filters/min_aligned_len"));
 }

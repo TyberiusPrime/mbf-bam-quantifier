@@ -95,11 +95,13 @@ scripts, which you can specify with `external_umi_thresholder_command` (as a
 list of command line arguments).
 
 The receiving command will receive a comma-separated-list of umi-counts
-per biomolecule on stdin.
+per biomolecule (and barcode) on stdin.
 
-It is supposed to return a single (integer, > 0) number on stdout:
-The threshold below which we'll remove the UMIs from counting.
+It is supposed to return a single (integer, >= 0) number on stdout:
+The threshold below which we'll remove the UMIs (per barcode) from counting.
 
 Returning anything else on stdout will result in an error
-(and an aborted quantification). Output on stderr is ignored (but shown in case of a
-non-zero return code / a non-parsable result).
+(and an aborted quantification). 
+Output on stderr is ignored (but shown in case of a non-zero return code / a non-parsable result).
+
+You can log the decisions by setting the environment variable `RUST_LOG=info`.

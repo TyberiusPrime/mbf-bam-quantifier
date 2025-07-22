@@ -1064,7 +1064,6 @@ impl Engine {
                                 }
                             }
 
-                            info!("calling capture_read_block");
                             self.capture_read_block(
                                 block,
                                 &mut output_catcher,
@@ -1151,7 +1150,6 @@ impl Engine {
                 &mut read_block.dedup_storage_reverse,
             ),
         ] {
-            info!("calling finish_bucket");
             dedup_storage.finish_bucket(block, dedup_mode);
             if let Some(external_command) = self
                 .umi_config

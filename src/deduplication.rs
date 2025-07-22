@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use bstr::BString;
-use log::info;
+use log::{debug, info};
 use petgraph::graph::{Graph, UnGraph};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -505,26 +505,23 @@ pub fn apply_external_threshold(
     block: &mut Vec<(engine::AnnotatedRead, usize)>,
     dedup_storage: &mut DedupPerBucket,
 ) -> Result<()> {
-    let mut umi_counts: Vec<u64> = Vec::new();
-    let mut per_umi_counts: HashMap<&BString, u64> = HashMap::new();
+    let mut per_umi_counts: HashMap<(&BString, Option<&BString>), u64> = HashMap::new();
     match dedup_storage {
         DedupPerBucket::None => {
             unreachable!("prevented by config check")
         }
         DedupPerBucket::Umi(counts) => {
-            umi_counts.extend(counts.values().map(|info| info.count));
-            per_umi_counts.extend(counts.iter().map(|(umi, info)| (umi, info.count)));
+            per_umi_counts.extend(counts.iter().map(|(umi, info)| ((umi, None), info.count)));
         }
         DedupPerBucket::SingleCell(per_barcode_counts) => {
-            for (_barcode, counts) in per_barcode_counts.iter_mut() {
-                umi_counts.extend(counts.values().map(|info| info.count));
+            for (barcode, counts) in per_barcode_counts.iter_mut() {
                 for (k, info) in counts.iter() {
-                    *(per_umi_counts.entry(k).or_insert(0)) += info.count;
+                    *(per_umi_counts.entry((k, Some(barcode))).or_insert(0)) += info.count;
                 }
             }
         }
     }
-    if umi_counts.is_empty() {
+    if per_umi_counts.is_empty() {
         //no UMIs, nothing to do.
         return Ok(());
     }
@@ -548,9 +545,10 @@ pub fn apply_external_threshold(
             )
         })?;
     //write comma sepearated umi_counts to stdin
-    let str_counts = umi_counts
+    let str_counts = per_umi_counts
         .iter()
-        .filter(|x| **x > 0) // we might have 'empty' umis that were collapsed onto others in there.
+        .map(|(_k, count)| *count)
+        .filter(|x| *x > 0) // we might have 'empty' umis that were collapsed onto others in there.
         .map(|x| x.to_string())
         .collect::<Vec<_>>()
         .join(",");
@@ -583,16 +581,18 @@ pub fn apply_external_threshold(
     info!("The externally defined UMI min-coverage threshold for {title} is {threshold}");
     //dbg!("External threshold:", threshold);
 
-    let umis_to_filter: HashSet<&BString> = per_umi_counts
+    let umis_to_filter: HashSet<(&BString, Option<&BString>)> = per_umi_counts
         .iter()
         .filter(|(_umi, count)| **count < threshold)
         .map(|(umi, _count)| *umi)
         .collect();
 
+
     for read in block.iter_mut() {
         if let engine::AnnotatedRead::Counted(info) = &mut read.0 {
             if let Some(umi) = info.umi.as_ref() {
-                if umis_to_filter.contains(umi) {
+                let barcode = info.barcode.as_ref();
+                if umis_to_filter.contains(&(umi, barcode)) {
                     *read = (engine::AnnotatedRead::RemovedByExternalUmiTreshold, read.1)
                 }
             }

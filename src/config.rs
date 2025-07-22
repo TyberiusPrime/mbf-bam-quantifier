@@ -178,7 +178,11 @@ pub struct Strategy {
 pub enum GTFFormat {
     #[default]
     AutoDetect,
+    #[serde(alias="gff")]
+    #[serde(alias="GFF")]
     Gff,
+    #[serde(alias="gtf")]
+    #[serde(alias="GTF")]
     Gtf,
 }
 

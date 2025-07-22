@@ -46,7 +46,7 @@ type Whitelist = HashSet<Vec<u8>>;
 pub struct CellBarcodes {
     extract: extractors::Extractor,
     #[serde(deserialize_with = "u8_from_char_or_number")]
-    separator_char: u8,
+    separator_char: u8,  //todo: make optional?
     #[serde(default)]
     max_hamming: u16,
     #[serde(default)]

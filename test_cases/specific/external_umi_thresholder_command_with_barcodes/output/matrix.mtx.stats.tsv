@@ -1,0 +1,12 @@
+stat	count
+ambiguous	0
+approximate_umi_duplicate	21
+barcode_not_in_allowlist	0
+correct	19
+exact_umi_duplicate	974
+filtered	0
+no_barcode	0
+no_umi	0
+outside	0
+removed_by_umi_threshold	189
+reverse	0
