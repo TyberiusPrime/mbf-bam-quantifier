@@ -166,7 +166,6 @@ pub struct Hits {
 #[derive(Debug, Clone)]
 pub struct AnnotatedReadInfo {
     pub corrected_position: i32, // clipping corrected position. Samspec is limited to 0..2^31-1,
-    // so i32 is safe, and it allows us to have negative corrected positions
     pub hits: Hits,
     pub umi: Option<BString>,     // Optional: What's it's UMI. 24 bytes
     pub barcode: Option<BString>, // Optional: What's it's cell-barcode 24 bytes
@@ -218,7 +217,7 @@ pub enum CounterPerChunk {
         stat_counter: HashMap<String, usize>,
         counter: BTreeMap<(string_interner::symbol::SymbolU32, Vec<u8>), usize>,
     },
-    PerStartPosition {
+    StartPositions {
         counter: HashMap<(string_interner::symbol::SymbolU32, i32), (usize, usize)>,
         stat_counter: HashMap<String, usize>,
     },
@@ -328,7 +327,7 @@ impl CounterPerChunk {
                 }
             }
 
-            CounterPerChunk::PerStartPosition {
+            CounterPerChunk::StartPositions {
                 counter,
                 stat_counter,
                 ..
@@ -599,7 +598,7 @@ impl Output {
                 counter: HashMap::new(),
                 stat_counter: HashMap::new(),
             },
-            Output::StartPositions { .. } => CounterPerChunk::PerStartPosition {
+            Output::StartPositions { .. } => CounterPerChunk::StartPositions {
                 counter: HashMap::new(),
                 stat_counter: HashMap::new(),
             },
@@ -714,7 +713,7 @@ impl Output {
                     counter: incoming_counter,
                     stat_counter: incoming_stat_counter,
                 }
-                | CounterPerChunk::PerStartPosition {
+                | CounterPerChunk::StartPositions {
                     counter: incoming_counter,
                     stat_counter: incoming_stat_counter,
                 } => {
@@ -1315,7 +1314,11 @@ impl Engine {
                             if debug_processed_positions.contains(&done_pos) {
                                 panic!("We are processing the same position twice.Bug");
                             }
-                            for read in &block.reads_forward {
+                            /* 
+                            * This paranoia check ended when we started storing
+                            * the clipping corrected position, not the Dedup-group
+                            * position in here.
+                            * for read in &block.reads_forward {
                                 if let AnnotatedRead::Counted(info) = &read.0 {
                                     assert_eq!(info.corrected_position, done_pos);
                                 }
@@ -1325,7 +1328,7 @@ impl Engine {
                                 if let AnnotatedRead::Counted(info) = &read.0 {
                                     assert_eq!(info.corrected_position, done_pos);
                                 }
-                            }
+                            } */
 
                             self.capture_read_block(
                                 block,
@@ -1483,21 +1486,20 @@ impl Engine {
             let mut region_hit = None; //doing it per read, (with optional caching in the
                                        // matcher?) allows us fancier matchers later on
             let position_for_bounds_check = read.pos() as i32;
-            let corrected_position = match bucket_mode {
+            let corrected_position_from_read = if max_skip_len > 0 {
+                let rp = read
+                    .corrected_pos(max_skip_len)
+                    .expect("unaligned read found in chunk?1");
+                rp
+            } else {
+                read.pos() as i32 //this is safe. it's an aligned read, must be <2^31
+            };
+            let corrected_position_for_dedup = match bucket_mode {
                 Bucket::None => {
                     // no need to correct the position if we don't umi-deduplicate
                     read.pos() as i32
                 }
-                Bucket::PerPosition => {
-                    if max_skip_len > 0 {
-                        let rp = read
-                            .corrected_pos(max_skip_len)
-                            .expect("unaligned read found?");
-                        rp
-                    } else {
-                        read.pos() as i32 //this is safe. it's an aligned read, must be <2^31
-                    }
-                }
+                Bucket::PerPosition => corrected_position_from_read,
                 Bucket::PerReference => {
                     // since here chunk = reference len, we simply place them to the right
                     // of all possible positions,
@@ -1537,7 +1539,7 @@ impl Engine {
             };
 
             let output = read_catcher
-                .entry(corrected_position)
+                .entry(corrected_position_for_dedup)
                 .or_insert_with(|| PerPosition {
                     reads_forward: Vec::new(),
                     reads_reverse: Vec::new(),
@@ -1653,7 +1655,7 @@ impl Engine {
             match do_accept {
                 AcceptReadResult::Duplicated => {
                     res.push((
-                        AnnotatedRead::new_exact_duplicate(corrected_position),
+                        AnnotatedRead::new_exact_duplicate(corrected_position_from_read),
                         *org_index,
                     ));
                     *org_index += 1;
@@ -1673,7 +1675,7 @@ impl Engine {
                         None
                     };
                     let info = AnnotatedReadInfo {
-                        corrected_position: corrected_position,
+                        corrected_position: corrected_position_from_read,
                         reverse: read.is_reverse(),
                         hits: Hits {
                             correct: genes_hit_correct.clone(),
@@ -1693,7 +1695,7 @@ impl Engine {
                 AcceptReadResult::DuplicateButPrefered(idx_to_set_duplicate) => {
                     let (_old, old_org_index) = &res[idx_to_set_duplicate];
                     res[idx_to_set_duplicate] = (
-                        AnnotatedRead::new_exact_duplicate(corrected_position),
+                        AnnotatedRead::new_exact_duplicate(corrected_position_from_read),
                         *old_org_index,
                     );
                     let covered_bases = if capture_coverage {
@@ -1711,7 +1713,7 @@ impl Engine {
                     };
 
                     let info = AnnotatedReadInfo {
-                        corrected_position: corrected_position,
+                        corrected_position: corrected_position_from_read,
                         reverse: read.is_reverse(),
                         hits: Hits {
                             correct: genes_hit_correct.clone(),
@@ -2062,12 +2064,6 @@ impl TreeMatcher {
                         target.push(gene_id);
                     }
                 }
-            }
-            let do_debug = read.qname() == b"HWI-C00113:73:HVM2VBCXX:1:1102:8710:77748" || 
-            read.qname() == b"HWI-C00113:73:HVM2VBCXX:1:1114:17731:21021";
-            if do_debug {
-                dbg!(read);
-                dbg!(&gene_nos_seen_match, &gene_nos_seen_reverse);
             }
             for gg in [&mut gene_nos_seen_match, &mut gene_nos_seen_reverse] {
                 match self.count_strategy.multi_region {

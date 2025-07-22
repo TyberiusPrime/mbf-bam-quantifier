@@ -45,9 +45,9 @@ impl BamRecordExtensions for bam::Record {
             //And if the read is beyond the current chunk afterwards,
             //we filter it - it will be fetched again within the chunk it fits in..
             Some(
-                self.reference_end()
+                (self.reference_end() + self.cigar().trailing_softclips())
                     .try_into()
-                    .expect("reference end beyond i32 range"),
+                    .expect("softclip exceeded i64"),
             )
         } else {
             //it's always the leading ones... since the seq gets flipped
