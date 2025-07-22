@@ -1,0 +1,20 @@
+[input]
+    bam = "input.bam"
+
+[input.source]
+   mode ="gtf"
+   filename = "input.gtf.gz"
+   feature = 'exon'
+   id_attribute = 'exon_id'
+   aggr_id_attribute = 'exon_id'
+   duplicate_handling= 'rename'
+
+
+[strategy]
+	multi_region = 'drop'
+	direction = 'ignore'
+
+
+[output]
+	mode = "coverage"
+    directory = 'output'

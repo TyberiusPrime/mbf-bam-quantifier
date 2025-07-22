@@ -203,17 +203,69 @@ fn default_output_counts() -> bool {
     true
 }
 
+#[derive(Deserialize, Debug, Clone, Serialize, Copy)]
+pub enum OutputMode {
+    #[serde(alias = "none")]
+    None,
+    #[serde(alias = "region")]
+    Region,
+    #[serde(alias = "single_cell")]
+    SingleCell,
+    #[serde(alias = "start_positions")]
+    StartPositions,
+    #[serde(alias = "coverage")]
+    Coverage,
+}
+
+impl std::fmt::Display for OutputMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputMode::None => write!(f, "Rone"),
+            OutputMode::Region => write!(f, "Region"),
+            OutputMode::SingleCell => write!(f, "SingleCell"),
+            OutputMode::StartPositions => write!(f, "StartPositions"),
+            OutputMode::Coverage => write!(f, "Coverage"),
+        }
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Output {
     pub directory: PathBuf,
+    pub mode: Option<OutputMode>,
+
     #[serde(default)]
     pub write_annotated_bam: bool,
     #[serde(default)]
     pub only_correct: bool,
+}
 
-    #[serde(default = "default_output_counts")]
-    pub counts: bool,
+impl Output {
+    fn check(config: &mut Config) -> Result<()> {
+        if config.output.directory.to_string_lossy().is_empty() {
+            bail!("Output directory cannot be empty");
+        }
+        match config.output.mode {
+            None => {
+                if config.cell_barcodes.is_some() {
+                    config.output.mode = Some(OutputMode::SingleCell);
+                } else {
+                    config.output.mode = Some(OutputMode::Region);
+                }
+            }
+            Some(OutputMode::SingleCell) => {
+                if !config.cell_barcodes.is_some() {
+                    bail!("SingleCell output mode requires cell barcodes to be configured.");
+                }
+            }
+            Some(OutputMode::None)
+            | Some(OutputMode::Region)
+            | Some(OutputMode::StartPositions)
+            | Some(OutputMode::Coverage) => {}
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -252,6 +304,7 @@ impl Config {
         }
         //self.strategy.check(self)?; nothing to chek
         self.input.check(self)?;
+        Output::check(self)?;
         if let Some(umi) = self.umi.as_ref() {
             umi.check(self)?;
             if self.input.correct_reads_for_clipping.is_none() {
@@ -259,7 +312,9 @@ impl Config {
             }
         } else {
             if let Some(true) = self.input.correct_reads_for_clipping {
-                bail!("correct_reads_for_clipping is only meaningful if UMI deduplication is activated.");
+                if !matches!(self.output.mode.unwrap(), OutputMode::StartPositions) {
+                    bail!("correct_reads_for_clipping is only meaningful if UMI deduplication is activated, or output.mode == StartPositions. Was {}", self.output.mode.unwrap());
+                }
             } else {
                 self.input.correct_reads_for_clipping = Some(false);
             }

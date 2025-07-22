@@ -37,28 +37,30 @@ impl BamRecordExtensions for bam::Record {
         if p < 0 {
             // not aligned, no corrected position
             None
-        } else {
-            if self.is_reverse() {
-                //add everything up *but* a leading soft clip.
+        } else if self.is_reverse() {
+            //add everything up *but* a leading soft clip.
 
-                //I don't think this will lead to problems with max_skip_len.
-                //we always add to the right.
-                //And if the read is beyond the current chunk afterwards,
-                //we filter it - it will be fetched again within the chunk it fits in..
-                Some(self.reference_end().try_into().expect("reference end beyond i32 range"))
-            } else {
-                //it's always the leading ones... since the seq gets flipped
-
-                let skip: i32 = self
-                    .cigar()
-                    .leading_softclips()
+            //I don't think this will lead to problems with max_skip_len.
+            //we always add to the right.
+            //And if the read is beyond the current chunk afterwards,
+            //we filter it - it will be fetched again within the chunk it fits in..
+            Some(
+                self.reference_end()
                     .try_into()
-                    .expect("softclip exceeded i64");
-                if skip > max_skip_len.try_into().unwrap() {
-                    panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?")
-                }
-                Some(p.saturating_sub(skip))
+                    .expect("reference end beyond i32 range"),
+            )
+        } else {
+            //it's always the leading ones... since the seq gets flipped
+
+            let skip: i32 = self
+                .cigar()
+                .leading_softclips()
+                .try_into()
+                .expect("softclip exceeded i64");
+            if skip > max_skip_len.try_into().unwrap() {
+                panic!("Your reads have skipped regions > max_skip_len ({skip}>{max_skip_len}). Increase the setting via input.max_skip_length. Or filter the reads?")
             }
+            Some(p.saturating_sub(skip))
         }
     }
     /// try to retrieve the number of mapping coordinates

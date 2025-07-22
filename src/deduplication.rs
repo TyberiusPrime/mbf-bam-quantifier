@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use bstr::BString;
-use log::{debug, info};
+use log::info;
 use petgraph::graph::{Graph, UnGraph};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -587,7 +587,6 @@ pub fn apply_external_threshold(
         .map(|(umi, _count)| *umi)
         .collect();
 
-
     for read in block.iter_mut() {
         if let engine::AnnotatedRead::Counted(info) = &mut read.0 {
             if let Some(umi) = info.umi.as_ref() {
@@ -639,6 +638,7 @@ mod test {
                     barcode: None,         // Optional: What's it's cell-barcode 24 bytes
                     mapping_priority: (0, 0),
                     reverse: false,
+                    covered_bases: None
                 })),
                 reads.len(),
             ));

@@ -21,7 +21,7 @@
 
 [output]
 	directory = 'output'
-    counts = false
+	mode = 'none'
 	write_annotated_bam  = true
 	# counts = false TODO
 

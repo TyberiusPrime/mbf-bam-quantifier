@@ -23,6 +23,21 @@ fn test_case_basic_basic_unstranded_gene_is_contig_incl_multimapper() {
 }
 
 #[test]
+fn test_case_coverage_and_per_pos_corrected_positions_in_regions() {
+    run_test(std::path::Path::new("test_cases/coverage_and_per_pos/corrected_positions_in_regions"));
+}
+
+#[test]
+fn test_case_coverage_and_per_pos_coverage_in_regions() {
+    run_test(std::path::Path::new("test_cases/coverage_and_per_pos/coverage_in_regions"));
+}
+
+#[test]
+fn test_case_coverage_and_per_pos_position_in_regions() {
+    run_test(std::path::Path::new("test_cases/coverage_and_per_pos/position_in_regions"));
+}
+
+#[test]
 fn test_case_featurecounts_feature_counts_exon_level_stranded() {
     run_test(std::path::Path::new("test_cases/featurecounts/feature_counts_exon_level_stranded"));
 }

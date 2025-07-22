@@ -1,0 +1,22 @@
+[input]
+    bam = "input.bam"
+    correct_reads_for_clipping = true
+
+[input.source]
+   mode ="gtf"
+   filename = "input.gtf.gz"
+   feature = 'exon'
+   id_attribute = 'exon_id'
+   aggr_id_attribute = 'exon_id'
+   duplicate_handling= 'rename'
+
+
+[strategy]
+	multi_region = 'count_both'
+	direction = 'ignore'
+
+
+[output]
+	mode = "start_positions"
+    directory = 'output'
+    write_annotated_bam = true

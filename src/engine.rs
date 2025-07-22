@@ -20,6 +20,7 @@ use bio::data_structures::interval_tree::IntervalTree;
 use chunked_genome::{Chunk, ChunkedGenome};
 use itertools::{izip, Itertools};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rust_htslib::bam::ext::BamRecordExtensions as RustHtsLibBamExtensions;
 use rust_htslib::bam::{self, Read as ReadTrait};
 
 use crate::gtf::GTFEntrys;
@@ -171,6 +172,8 @@ pub struct AnnotatedReadInfo {
     pub barcode: Option<BString>, // Optional: What's it's cell-barcode 24 bytes
     pub mapping_priority: (u8, u8),
     pub reverse: bool,
+    pub covered_bases: Option<Vec<i32>>, // for PerChunk::Coverage. is_reverse,
+                                         // reference_positions
 }
 
 pub enum ReadToGeneMatcher {
@@ -215,10 +218,23 @@ pub enum CounterPerChunk {
         stat_counter: HashMap<String, usize>,
         counter: BTreeMap<(string_interner::symbol::SymbolU32, Vec<u8>), usize>,
     },
+    PerStartPosition {
+        counter: HashMap<(string_interner::symbol::SymbolU32, i32), (usize, usize)>,
+        stat_counter: HashMap<String, usize>,
+    },
+    Coverage {
+        counter: HashMap<(string_interner::symbol::SymbolU32, i32), (usize, usize)>,
+        stat_counter: HashMap<String, usize>,
+    },
 }
 
 impl CounterPerChunk {
-    fn count_reads(&mut self, annotated_reads: &Vec<(AnnotatedRead, usize)>) -> Result<()> {
+    fn count_reads(
+        &mut self,
+        chunk: &Chunk,
+        interner: &mut OurInterner,
+        annotated_reads: &Vec<(AnnotatedRead, usize)>,
+    ) -> Result<()> {
         match self {
             CounterPerChunk::NoCount => {
                 return Ok(());
@@ -311,11 +327,103 @@ impl CounterPerChunk {
                     }
                 }
             }
+
+            CounterPerChunk::PerStartPosition {
+                counter,
+                stat_counter,
+                ..
+            } => {
+                for (read, _org_index) in annotated_reads {
+                    let count_as = match read {
+                        AnnotatedRead::Counted(info) => {
+                            let hits = &info.hits;
+                            let pos = info.corrected_position;
+                            if !hits.correct.is_empty() || !hits.reverse.is_empty() {
+                                //otherwise it's outside of a region.
+                                let key = &chunk.chr;
+                                let entry = counter
+                                    .entry((interner.get_or_intern(key), pos))
+                                    .or_insert((0, 0));
+                                if info.reverse {
+                                    entry.1 = entry.1.saturating_add(1);
+                                    "reverse"
+                                } else {
+                                    entry.0 = entry.0.saturating_add(1);
+                                    "forward"
+                                }
+                            } else {
+                                "outside"
+                            }
+                        }
+                        AnnotatedRead::Filtered => "filtered",
+                        AnnotatedRead::NotInRegion => {
+                            //these are 'accidential overfetches'
+                            "overfetch"
+                        }
+                        AnnotatedRead::ExactUmiDuplicate(_) => "exact_umi_duplicate",
+                        AnnotatedRead::ApproximateUmiDuplicate(_) => "approximate_umi_duplicate",
+                        AnnotatedRead::NoBarcode => "no_barcode",
+
+                        AnnotatedRead::NoUMI => "no_umi",
+                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_allowlist",
+                        AnnotatedRead::RemovedByExternalUmiTreshold => "removed_by_umi_threshold",
+                    };
+                    if count_as != "overfetch" {
+                        //todo: preinsert values
+                        *stat_counter.entry(count_as.to_string()).or_default() += 1;
+                    }
+                }
+            }
+            CounterPerChunk::Coverage {
+                counter,
+                stat_counter,
+                ..
+            } => {
+                for (read, _org_index) in annotated_reads {
+                    let count_as = match read {
+                        AnnotatedRead::Counted(info) => {
+                            let reference = interner.get_or_intern(&chunk.chr);
+                            let positions = info.covered_bases.as_ref().unwrap();
+                            let reverse = info.reverse;
+                            for position in positions {
+                                let entry = counter.entry((reference, *position)).or_insert((0, 0));
+                                if reverse {
+                                    entry.1 = entry.1.saturating_add(1)
+                                } else {
+                                    entry.0 = entry.0.saturating_add(1)
+                                }
+                            }
+                            if reverse {
+                                "reverse"
+                            } else {
+                                "forward"
+                            }
+                        }
+                        AnnotatedRead::Filtered => "filtered",
+                        AnnotatedRead::NotInRegion => {
+                            //these are 'accidential overfetches'
+                            "overfetch"
+                        }
+                        AnnotatedRead::ExactUmiDuplicate(_) => "exact_umi_duplicate",
+                        AnnotatedRead::ApproximateUmiDuplicate(_) => "approximate_umi_duplicate",
+                        AnnotatedRead::NoBarcode => "no_barcode",
+
+                        AnnotatedRead::NoUMI => "no_umi",
+                        AnnotatedRead::BarcodeNotInWhitelist(_) => "barcode_not_in_allowlist",
+                        AnnotatedRead::RemovedByExternalUmiTreshold => "removed_by_umi_threshold",
+                    };
+                    if count_as != "overfetch" {
+                        //todo: preinsert values
+                        *stat_counter.entry(count_as.to_string()).or_default() += 1;
+                    }
+                }
+            }
         }
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub enum Output {
     NoOutput,
     PerRegion {
@@ -334,6 +442,16 @@ pub enum Output {
         matrix_temp_dir: PathBuf,
         entry_count: usize,
     },
+    Coverage {
+        output_filename: PathBuf,
+        counter: HashMap<(String, i32), (usize, usize)>,
+        stat_counter: HashMap<String, usize>,
+    },
+    StartPositions {
+        output_filename: PathBuf,
+        counter: HashMap<(String, i32), (usize, usize)>,
+        stat_counter: HashMap<String, usize>,
+    },
 }
 
 impl Output {
@@ -347,6 +465,7 @@ impl Output {
         sorted_keys: Option<Vec<String>>,
         id_attribute: String,
     ) -> Self {
+        //todo: rework the whole stat thing.
         let stat_counter = [
             ("ambiguous", 0),
             ("correct", 0),
@@ -419,6 +538,52 @@ impl Output {
         })
     }
 
+    pub fn new_coverage(output_filename: PathBuf) -> Self {
+        //todo: rework the whole stat thing.
+        let stat_counter = [
+            ("forward", 0),
+            ("reverse", 0),
+            ("exact_umi_duplicate", 0),
+            ("approximate_umi_duplicate", 0),
+            ("no_barcode", 0),
+            ("no_umi", 0),
+            ("barcode_not_in_allowlist", 0),
+            ("filtered", 0),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+
+        Output::Coverage {
+            output_filename,
+            counter: HashMap::new(),
+            stat_counter,
+        }
+    }
+
+    pub fn new_start_positions(output_filename: PathBuf) -> Self {
+        //todo: rework the whole stat thing.
+        let stat_counter = [
+            ("forward", 0),
+            ("reverse", 0),
+            ("exact_umi_duplicate", 0),
+            ("approximate_umi_duplicate", 0),
+            ("no_barcode", 0),
+            ("no_umi", 0),
+            ("barcode_not_in_allowlist", 0),
+            ("filtered", 0),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+
+        Output::StartPositions {
+            output_filename,
+            counter: HashMap::new(),
+            stat_counter,
+        }
+    }
+
     pub fn per_chunk(&self) -> CounterPerChunk {
         match self {
             Output::NoOutput => CounterPerChunk::NoCount {},
@@ -430,6 +595,21 @@ impl Output {
                 counter: BTreeMap::new(),
                 stat_counter: HashMap::new(),
             },
+            Output::Coverage { .. } => CounterPerChunk::Coverage {
+                counter: HashMap::new(),
+                stat_counter: HashMap::new(),
+            },
+            Output::StartPositions { .. } => CounterPerChunk::PerStartPosition {
+                counter: HashMap::new(),
+                stat_counter: HashMap::new(),
+            },
+        }
+    }
+
+    pub fn capture_coverage(&self) -> bool {
+        match self {
+            Output::Coverage { .. } => true,
+            _ => false,
         }
     }
 
@@ -520,10 +700,41 @@ impl Output {
                     }
                 }
             }
+            Output::Coverage {
+                counter,
+                stat_counter,
+                output_filename: _,
+            }
+            | Output::StartPositions {
+                counter,
+                stat_counter,
+                output_filename: _,
+            } => match output_catcher {
+                CounterPerChunk::Coverage {
+                    counter: incoming_counter,
+                    stat_counter: incoming_stat_counter,
+                }
+                | CounterPerChunk::PerStartPosition {
+                    counter: incoming_counter,
+                    stat_counter: incoming_stat_counter,
+                } => {
+                    for ((ref_symbol, pos), v) in incoming_counter.iter() {
+                        let reference = interner.resolve(*ref_symbol).unwrap().to_string();
+                        let entry = counter.entry((reference, *pos)).or_insert((0, 0));
+                        entry.0 += v.0;
+                        entry.1 += v.1;
+                    }
+                    for (k, v) in incoming_stat_counter {
+                        *stat_counter.entry(k.clone()).or_default() += v;
+                    }
+                }
+                _ => unreachable!(),
+            },
         }
         Ok(())
     }
 
+    /// all chunks have been collected. produce the final output file
     fn finish(self, chunk_names: &[String]) -> Result<()> {
         measure_time::info_time!("Preparing final output");
         match self {
@@ -699,6 +910,54 @@ impl Output {
                 }
 
                 Self::write_stats(&matrix_filename, &stat_counter)
+                    .context("Failed to write stats file")?;
+            }
+            Output::Coverage {
+                ref counter,
+                ref stat_counter,
+                ref output_filename,
+            }
+            | Output::StartPositions {
+                ref counter,
+                ref stat_counter,
+                ref output_filename,
+            } => {
+                ex::fs::create_dir_all(output_filename.parent().unwrap())?;
+                let sorted_keys = {
+                    let mut keys: Vec<_> = counter.keys().map(|x| (x.0.to_string(), x.1)).collect();
+                    keys.sort();
+                    keys
+                };
+
+                let output_file = ex::fs::File::create(&output_filename)?;
+                let mut out_buffer = std::io::BufWriter::new(output_file);
+                match self {
+                    Output::Coverage { .. } => {
+                        out_buffer
+                            .write_all(b"reference\tposition\tcount_forward\tcount_reverse\n")
+                            .context("Failed to write header to output file")?;
+                    }
+                    Output::StartPositions { .. } => {
+                        out_buffer
+                            .write_all(b"reference\tstart_position\tcount_correct\tcount_reverse\n")
+                            .context("Failed to write header to output file")?;
+                    }
+                    _ => unreachable!(),
+                }
+                for key in sorted_keys {
+                    let (count_correct, count_reverse) = counter.get(&key).unwrap_or(&(0, 0));
+                    out_buffer
+                        .write_all(
+                            format!(
+                                "{}\t{}\t{}\t{}\n",
+                                key.0, key.1, count_correct, count_reverse
+                            )
+                            .as_bytes(),
+                        )
+                        .context("Failed to write counts to output file")?;
+                }
+
+                Self::write_stats(&output_filename, &stat_counter)
                     .context("Failed to write stats file")?;
             }
         }
@@ -961,6 +1220,8 @@ impl Engine {
         } else {
             0u32
         };
+        let capture_coverage = self.output.lock().unwrap().capture_coverage();
+
         let aggregated = pool.install(|| {
             let result: Result<()> = chunks
                 .into_par_iter()
@@ -1020,6 +1281,7 @@ impl Engine {
                             current_pos,
                             &mut read_catcher,
                             bucket_mode,
+                            capture_coverage,
                         )? {
                             let remaining_positions =
                                 read_catcher.split_off(&(current_pos - max_skip_len as i32));
@@ -1041,7 +1303,8 @@ impl Engine {
                                     block,
                                     &mut output_catcher,
                                     idx_to_annotation_decision.as_mut(),
-                                    &interner,
+                                    &mut interner,
+                                    &chunk,
                                 )?;
                             }
                             current_pos = next_pos;
@@ -1068,7 +1331,8 @@ impl Engine {
                                 block,
                                 &mut output_catcher,
                                 idx_to_annotation_decision.as_mut(),
-                                &interner,
+                                &mut interner,
+                                &chunk,
                             )?;
                         }
 
@@ -1132,7 +1396,8 @@ impl Engine {
         mut read_block: PerPosition,
         output_cacher: &mut CounterPerChunk,
         mut idx_to_annotated: Option<&mut HashMap<usize, AnnotatedRead>>,
-        interner: &OurInterner,
+        interner: &mut OurInterner,
+        chunk: &Chunk,
     ) -> Result<()> {
         let dedup_mode = self
             .umi_config
@@ -1166,7 +1431,7 @@ impl Engine {
             }
 
             output_cacher
-                .count_reads(&block)
+                .count_reads(&chunk, interner, &block)
                 .context("Failed to count reads in read block")?;
             if let Some(idx_to_annotated) = idx_to_annotated.as_mut() {
                 for (read, org_index) in block {
@@ -1189,6 +1454,7 @@ impl Engine {
         current_pos: i32,
         read_catcher: &mut BTreeMap<i32, PerPosition>,
         bucket_mode: Bucket,
+        capture_coverage: bool,
     ) -> Result<Option<i32>> {
         let mut last_read_pos: Option<i32> = None;
         'outer: loop {
@@ -1393,6 +1659,19 @@ impl Engine {
                     *org_index += 1;
                 }
                 AcceptReadResult::New => {
+                    let covered_bases = if capture_coverage {
+                        Some(
+                            read.aligned_pairs()
+                                .map(|item| -> i32 {
+                                    item[1] // that's the reference position
+                                        .try_into()
+                                        .expect("Aligned position did not fit in i32")
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    };
                     let info = AnnotatedReadInfo {
                         corrected_position: corrected_position,
                         reverse: read.is_reverse(),
@@ -1406,6 +1685,7 @@ impl Engine {
                             read.no_of_alignments().try_into().unwrap_or(255),
                             read.mapq(),
                         ),
+                        covered_bases,
                     };
                     res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
                     *org_index += 1;
@@ -1416,6 +1696,19 @@ impl Engine {
                         AnnotatedRead::new_exact_duplicate(corrected_position),
                         *old_org_index,
                     );
+                    let covered_bases = if capture_coverage {
+                        Some(
+                            read.aligned_pairs()
+                                .map(|item| -> i32 {
+                                    item[1] // that's the reference position
+                                        .try_into()
+                                        .expect("Aligned position did not fit in i32")
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    };
 
                     let info = AnnotatedReadInfo {
                         corrected_position: corrected_position,
@@ -1430,6 +1723,7 @@ impl Engine {
                             read.no_of_alignments().try_into().unwrap_or(255),
                             read.mapq(),
                         ),
+                        covered_bases,
                     };
                     res.push((AnnotatedRead::Counted(Box::new(info)), *org_index));
                     *org_index += 1;
@@ -1703,6 +1997,7 @@ impl TreeMatcher {
             .get(&chunk.chr)
             .expect("Chr not found in trees");
         let blocks = read.blocks();
+
         if let crate::config::OverlapMode::Union = self.count_strategy.overlap {
             let mut gene_nos_seen_match = Vec::new();
             let mut gene_nos_seen_reverse = Vec::new();
@@ -1767,6 +2062,12 @@ impl TreeMatcher {
                         target.push(gene_id);
                     }
                 }
+            }
+            let do_debug = read.qname() == b"HWI-C00113:73:HVM2VBCXX:1:1102:8710:77748" || 
+            read.qname() == b"HWI-C00113:73:HVM2VBCXX:1:1114:17731:21021";
+            if do_debug {
+                dbg!(read);
+                dbg!(&gene_nos_seen_match, &gene_nos_seen_reverse);
             }
             for gg in [&mut gene_nos_seen_match, &mut gene_nos_seen_reverse] {
                 match self.count_strategy.multi_region {
@@ -2054,10 +2355,7 @@ fn find_first_hit_gene(reads: &Vec<(AnnotatedRead, usize)>, interner: &OurIntern
     for (read, _) in reads.iter() {
         if let AnnotatedRead::Counted(info) = read {
             if !info.hits.correct.is_empty() {
-                return interner
-                    .resolve(info.hits.correct[0])
-                    .unwrap()
-                    .to_string();
+                return interner.resolve(info.hits.correct[0]).unwrap().to_string();
             }
         }
     }

@@ -1,35 +1,38 @@
 use std::collections::HashSet;
 
 use crate::{
-    config::{Input, Output},
+    config::{self, Input, Output},
     engine,
 };
 use anyhow::{Context, Result};
 use rust_htslib::bam::Read;
 
 fn create_output(
-    do_counts: bool,
-    per_cell: bool,
+    mode: Option<config::OutputMode>,
     output_directory: &std::path::PathBuf,
     sorted_output_keys: Option<Vec<String>>,
     header: &str,
     first_column_only: bool,
 ) -> Result<engine::Output> {
-    let output = if do_counts {
-        if per_cell {
+    let mode = mode.expect("Should have been set by config.output.check");
+    Ok(match mode {
+        config::OutputMode::None => engine::Output::new_no_output(),
+        config::OutputMode::Region => engine::Output::new_per_region(
+            output_directory.join("counts.tsv"),
+            first_column_only,
+            sorted_output_keys,
+            header.to_string(),
+        ),
+        config::OutputMode::SingleCell => {
             engine::Output::new_singlecell(output_directory.clone(), sorted_output_keys)?
-        } else {
-            engine::Output::new_per_region(
-                output_directory.join("counts.tsv"),
-                first_column_only,
-                sorted_output_keys,
-                header.to_string(),
-            )
         }
-    } else {
-        engine::Output::new_no_output()
-    };
-    Ok(output)
+        config::OutputMode::StartPositions => engine::Output::new_start_positions(
+            output_directory.join("start_positions.tsv"),
+        ),
+        config::OutputMode::Coverage => engine::Output::new_coverage(
+            output_directory.join("coverage.tsv"),
+        ),
+    })
 }
 
 pub fn quantify(
@@ -82,8 +85,7 @@ pub fn quantify(
                 keys
             };
             let output = create_output(
-                output.counts,
-                cell_barcode.is_some(),
+                output.mode,
                 &output.directory,
                 Some(sorted_output_keys.clone()),
                 &aggr_id_attribute,
@@ -132,8 +134,7 @@ pub fn quantify(
                 .map(|(name, _tid, _length)| name.clone())
                 .collect();
             let output = create_output(
-                output.counts,
-                cell_barcode.is_some(),
+                output.mode,
                 &output.directory,
                 Some(sorted_output_keys.clone()),
                 "reference",
@@ -152,21 +153,14 @@ pub fn quantify(
 
         crate::config::Source::BamTag(crate::config::BamTag { tag }) => {
             let output = create_output(
-                output.counts,
-                cell_barcode.is_some(),
+                output.mode,
                 &output.directory,
                 None,
                 std::str::from_utf8(&tag).context("Bam tag name was not valid utf8")?,
                 single_column_counts_only,
             )?;
 
-            engine::Engine::from_bam_tag(
-                tag,
-                filters,
-                umi_extraction,
-                cell_barcode,
-                output,
-            )
+            engine::Engine::from_bam_tag(tag, filters, umi_extraction, cell_barcode, output)
         }
     };
 
