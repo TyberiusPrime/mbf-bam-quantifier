@@ -76,7 +76,7 @@ impl BamRecordExtensions for bam::Record {
                 bam::record::Aux::I16(x) => x as u32,
                 bam::record::Aux::I32(x) => x.try_into().expect("NH tag was outside of u32 range"),
                 _ => {
-                    panic!("Mapping coordinate tag NH wasn't an unsigned int.");
+                    panic!("Mapping coordinate tag NH wasn't an int.");
                 }
             }
         } else {
