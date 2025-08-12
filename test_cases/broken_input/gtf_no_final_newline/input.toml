@@ -1,0 +1,12 @@
+[input]
+bam = "input.bam"
+
+[input.source]
+mode = "gtf"
+filename = "input.gtf"
+feature = "tss"
+id_attribute = "gene_stable_id"
+
+[output]
+directory = "output"
+mode = "Region"

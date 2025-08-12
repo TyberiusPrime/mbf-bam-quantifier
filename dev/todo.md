@@ -89,3 +89,17 @@ umi dedup methods
 - when deduping per gene/reference, we need to make sure correct_read_pos is false.
 Otherwise we might process the fake '0' position somewhere after max_split_size again.
 (our paranoia code should catch that though, so we'll know when it happens)
+
+- failure test case for gtf that looks like this
+1	mbf	tss	16437	18436	0	.	0	gene_stable_id "ENSG00000278267"
+1	mbf	tss	28571	30570	0	.	0	gene_stable_id "ENSG00000227232"
+1	mbf	tss	35082	37081	0	.	0	gene_stable_id "ENSG00000237613"
+1	mbf	tss	51473	53472	0	.	0	gene_stable_id "ENSG00000268020"
+1	mbf	tss	56598	58597	0	.	0	gene_stable_id "ENSG00000290826"
+1	mbf	tss	61949	63948	0	.	0	gene_stable_id "ENSG00000240361"
+1	mbf	tss	64419	66418	0	.	0	gene_stable_id "ENSG00000186092"
+1	mbf	tss	90106	92105	0	.	0	gene_stable_id "ENSG00000239945"
+1	mbf	tss	130025	132024	0	.	0	gene_stable_id "ENSG00000233750"
+1	mbf	tss	132724	134723	0	.	0	gene_stable_id "ENSG00000238009"
+
+(missing final ;)

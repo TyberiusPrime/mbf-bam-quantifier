@@ -23,6 +23,11 @@ fn test_case_basic_basic_unstranded_gene_is_contig_incl_multimapper() {
 }
 
 #[test]
+fn test_case_broken_input_gtf_no_final_newline() {
+    run_test(std::path::Path::new("test_cases/broken_input/gtf_no_final_newline"));
+}
+
+#[test]
 fn test_case_coverage_and_per_pos_corrected_positions_in_regions() {
     run_test(std::path::Path::new("test_cases/coverage_and_per_pos/corrected_positions_in_regions"));
 }

@@ -137,11 +137,18 @@ pub fn parse_minimal(
 ) -> Result<HashMap<String, GTFEntrys>> {
     use linereader::LineReader; // non allocateding.
     let file = open_file(filename)?;
-    let mut reader = LineReader::with_capacity(128 * 1024, file);
+    let buf_size = 128 * 1024; // 128k buffer size
+    let mut reader = LineReader::with_capacity(buf_size, file);
     let mut result = HashMap::new();
     let mut gff_or_gtf = gff_or_gtf;
+    let mut bail_because_of_buffer_size_exceeded = false;
 
     while let Some(line) = reader.next_line() {
+        if bail_because_of_buffer_size_exceeded {
+            bail!(
+                    "Line length exceed our buffer size of {buf_size} bytes, please increase the buffer size in the LineReader::with_capacity() call (or change your GTF to be more reasonable?)."
+                );
+        }
         let line = line.context("line reading error")?;
         if line.is_empty() {
             continue;
@@ -151,9 +158,9 @@ pub fn parse_minimal(
         }
         let line = std::str::from_utf8(line).context("line was not utf8")?;
         if !line.ends_with('\n') {
-            bail!(
-                "Line length exceed our buffer size, please increase the buffer size in the LineReader::with_capacity() call."
-            );
+            bail_because_of_buffer_size_exceeded = true; // if next reader.next_line() returns
+            // Some, we bail. Otherwise, it's the final line, lacking the '\n',
+            // which we gracefully ignore.
         }
         let mut fields = line.split('\t');
         let seqname = fields.next().context("No seqname")?;
@@ -235,7 +242,7 @@ pub fn parse_minimal(
             entry.count += 1;
         } else {
             //todo change to warning
-            println!("Skipping GTF line because of missing tags. Is your GTF actually a GFF?. Current format: {line:?}: {gff_or_gtf:?}. Tried to parse {attributes_str:?}");
+            println!("Skipping GTF line because of missing tag(s). Do you have the correct feature in your input.source config? Is your GTF actually a GFF?. Current format: {line:?}: {gff_or_gtf:?}. Tried to parse {attributes_str:?}");
         }
     }
     Ok(result)
