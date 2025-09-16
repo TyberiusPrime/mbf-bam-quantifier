@@ -19,5 +19,5 @@ weight: 12
 
 Filter to reads that have either the Read1 (0x20) or Read2 (0x40) SAM flag.
 
-Note that while these are lablede 'read1/read2' they're defined as 'first segment in the template'
+Note that while these are labeled 'read1/read2' they're defined as 'first segment in the template'
 and 'last segment in the template'. 
