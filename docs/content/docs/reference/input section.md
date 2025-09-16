@@ -74,7 +74,7 @@ By default, we 'collapse' them - identical exons (with identical exon_id) will b
 and will be summed only once into the final gene count.
 
 The other option is to 'remove', which will ignore any reads in these exons
-(And report them multiple times in the outut, with 0 reads each!). 
+(And report them multiple times in the output, with 0 reads each!). 
 That's what featureCounts does. (I'm not convinced this is actually a useful mode, but 
 we want to be able to emulate featureCounts).
 
