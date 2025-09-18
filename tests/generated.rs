@@ -68,6 +68,11 @@ fn test_case_featurecounts_feature_counts_gene_level_unstranded() {
 }
 
 #[test]
+fn test_case_from_the_field_double_filtering_reads_and_chunks() {
+    run_test(std::path::Path::new("test_cases/from_the_field/double_filtering_reads_and_chunks"));
+}
+
+#[test]
 fn test_case_htseq_simple_intersection_non_empty() {
     run_test(std::path::Path::new("test_cases/htseq/simple-intersection-non-empty"));
 }

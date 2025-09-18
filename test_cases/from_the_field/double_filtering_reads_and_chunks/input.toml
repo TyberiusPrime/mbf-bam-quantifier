@@ -1,0 +1,29 @@
+# problem here was that we were filtering the reads to have their left most position
+# inside the chunks,
+# but then were filtering the blocks again to be inside of the chunks
+# therefore ignoring blocks that extended outside of the chunk
+
+[input]
+	bam = "input.bam"
+	correct_reads_for_clipping=false
+[input.source]
+	mode = 'gtf'
+	filename = "input.gtf"
+	subformat = "GTF"
+	feature = "exon"
+	id_attribute = "gene_id"
+	aggr_id_attribute = "gene_id"
+	duplicate_handling = "Collapse"
+
+
+[output]
+	directory = 'quant'
+	mode = 'Region'
+	write_annotated_bam = true # if set to true, write <directory>/annotated.bam
+
+[strategy]
+	direction = 'ignore'
+	overlap = 'union'
+	multi_region = 'count_both'
+
+

@@ -2005,15 +2005,11 @@ impl TreeMatcher {
             let mut gene_nos_seen_reverse = Vec::new();
             //todo: I don't like having this duplication
             for iv in blocks.iter() {
-                if chunk.interval_outside(iv.0, iv.1) {
-                    // if this block is outside of the region
-                    // don't count it at all.
-                    // if it is on a block boundary
-                    // only count it for the left side.
-                    // which is ok, since we place the blocks to the right
-                    // of our intervals.
-                    continue;
-                }
+                /* if chunk.interval_outside(iv.0, iv.1) {
+                    // We count reads only in the chunk where their left most position is.
+                    // but that means we need to be careful to count all their blocks,
+                    // even if they ain't in the current chunk.
+                } */
                 //todo: consider using either a bitset for the overlap range,
                 //or no overlap range at all when doing Union.
                 for r in tree.find(iv.0..iv.1) {

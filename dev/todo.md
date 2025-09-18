@@ -103,3 +103,7 @@ Otherwise we might process the fake '0' position somewhere after max_split_size 
 1	mbf	tss	132724	134723	0	.	0	gene_stable_id "ENSG00000238009"
 
 (missing final ;)
+
+- what's the unstranded / inverse stranded story.
+Unstrande is simply 'no strand info in gtf', I believ.
+Guess 'reverse' stranded might be handled by flipping the gtf strands...
