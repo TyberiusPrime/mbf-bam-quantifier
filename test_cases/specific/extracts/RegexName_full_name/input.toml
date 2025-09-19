@@ -1,0 +1,33 @@
+            [input]
+                bam = "input.bam"
+                correct_reads_for_clipping=false
+
+            [input.source]
+                mode = 'gtf'
+                filename = "input.gtf"
+                subformat = "GTF"
+                feature = "exon"
+                id_attribute = "gene_id"
+                aggr_id_attribute = "gene_id"
+                duplicate_handling = "Collapse"
+
+            [umi]
+                extract = {mode = 'RegexName', regex = '(.+)'}
+                strategy.kind = 'unique'
+                bucket = 'PerRegion'
+
+            [[filter]]
+                mode = 'read2'
+                action = 'remove'
+
+            [output]
+                directory = '.'
+                mode = 'Region'
+                write_annotated_bam = true # if set to true, write <directory>/annotated.bam
+
+            [strategy]
+                direction = 'ignore'
+                overlap = 'union'
+                multi_region = 'count_both'
+
+

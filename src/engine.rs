@@ -1036,6 +1036,20 @@ fn has_any_overlapping_features(trees: &HashMap<String, (OurTree, Vec<String>)>)
     Ok(())
 }
 
+fn any_split_features(entries: &GTFEntrys, entry_id_attribute: &str) -> Result<bool> {
+    let mut seen = HashSet::new();
+    for key in entries
+        .vec_attributes
+        .get(entry_id_attribute)
+        .context("entry without id attribute")?
+    {
+        if !seen.insert(key) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl Engine {
     #[allow(clippy::too_many_arguments)]
     pub fn from_gtf(
@@ -1053,16 +1067,15 @@ impl Engine {
                 .remove(entry_kind)
                 .with_context(||format!("No GTF entries found for feature {}. Necessary to know where to split the genome productivly.", entry_kind))?;
 
-        //what in the world am I doing here?
-
         let feature_trees = build_trees_from_gtf(entry_id_attribute, &feature_entries)
             .context("Failed to build feature trees from GTF")?;
 
-        let split_trees = if aggregation_id_attribute == entry_id_attribute {
-            feature_trees.clone()
-        } else {
+        // where can we separate the chunks?
+        let split_trees = if any_split_features(&feature_entries, aggregation_id_attribute)? {
             build_trees_from_gtf_merged(aggregation_id_attribute, &feature_entries)
                 .context("Failed to build split trees from GTF")?
+        } else {
+            feature_trees.clone()
         };
         if let Some(umi_config) = umi_config.as_ref() {
             if matches!(umi_config.bucket, DeduplicationBucket::PerRegion) {

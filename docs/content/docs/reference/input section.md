@@ -31,7 +31,7 @@ The input section is mandatory.
     id_attribute = "exon_id" # the attribute to use as the ID of the feature
     aggr_id_attribute = "gene_id" # optional. If set & different from id_attribute, we sum over this.
     duplication_handling = "Collapse|Remove" # what to do with regions that occur multiple times in the GTF
-                                             # e.g. exons that occur in multiple transcrpts.
+                                             # e.g. exons that occur in multiple transcripts.
                                              # Defaults to Collapse.
 ```
 
@@ -67,14 +67,14 @@ you can use the `bam_tag` source.
 mbf-bam-quantifier can read (GTF and GFF)[https://www.ensembl.org/info/website/upload/gff.html] files (subformat is not not auto-detected at the moment).
 Trigger both with `mode = 'GTF'` and the appropriate subformat.
 
-### Duplicate region handling
+#### Duplicate region handling
 GTFs that contain transcripts have repeated regions, e.g. exons that occur in multiple transcripts.
 
 By default, we 'collapse' them - identical exons (with identical exon_id) will be counted once,
-and will be summed only once into the final gene count.
+and will be summed into the final per gene count (per `aggr_id_attribute`, more precisely).
 
 The other option is to 'remove', which will ignore any reads in these exons
-(And report them multiple times in the output, with 0 reads each!). 
+(And report them multiple times in the output, with 0 reads each if `aggr_id_attribute` is not set!). 
 That's what featureCounts does. (I'm not convinced this is actually a useful mode, but 
 we want to be able to emulate featureCounts).
 

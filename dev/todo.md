@@ -105,5 +105,8 @@ Otherwise we might process the fake '0' position somewhere after max_split_size 
 (missing final ;)
 
 - what's the unstranded / inverse stranded story.
-Unstrande is simply 'no strand info in gtf', I believ.
-Guess 'reverse' stranded might be handled by flipping the gtf strands...
+We have that in the strategy.
+
+- document the id_attribute, aggr_id_attribute functionality.
+id_attribute -> used in region dedup / featureCounts parity.
+aggr_id_attribute -> used to define what we add up, and where the splits can occur.
