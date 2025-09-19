@@ -78,7 +78,7 @@ pub fn build_trees_from_gtf(
     res
 }
 
-//first merge intervals by id_attribute, then build the tree
+//first merge intervals by id_attribute, minmaxing start/stop, then build the tree
 pub fn build_trees_from_gtf_merged(
     id_attribute: &str,
     gtf_entries: &GTFEntrys,
@@ -1108,10 +1108,11 @@ impl Engine {
         };
         if let Some(umi_config) = umi_config.as_ref() {
             if matches!(umi_config.bucket, DeduplicationBucket::PerRegion) {
-                //I think this might be too conservative
-                //For one, I might have genes that 'overlap' in gene body, but don't in exons
-                //and what are we doing with multi hitting reads anyway
-
+                //what are we doing with multi hitting reads anyway
+                //I think we're panic when they happen.
+                //
+                //at least it's too conservative when it's not considering the strand,
+                //and the user's counting strand aware...
                 let id_to_aggr_id = HashMap::from_iter(
                     feature_entries
                         .vec_attributes
@@ -2153,7 +2154,7 @@ impl TreeMatcher {
             let mut bases_aligned = 0u32;
             for iv in blocks.iter() {
                 bases_aligned += iv.1 - iv.0;
-                if chunk.interval_outside(iv.0, iv.1) {
+                /* if chunk.interval_outside(iv.0, iv.1) { same argument as above...
                     // if this block is outside of the region
                     // don't count it at all.
                     // if it is on a block boundary
@@ -2161,7 +2162,7 @@ impl TreeMatcher {
                     // which is ok, since we place the blocks to the right
                     // of our intervals.
                     continue;
-                }
+                } */
                 //todo: consider using either a bitset for the overlap range,
                 //or no overlap range at all when doing Union.
                 for r in tree.find(iv.0..iv.1) {
