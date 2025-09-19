@@ -1030,7 +1030,8 @@ fn overlapping_features(
                     gene_name_a = Some(
                         id_to_aggr_id
                             .get(exon_id)
-                            .expect("Could not find id to aggr_id?"),
+                            .with_context(|| format!("Could not find id to aggr_id? {exon_id}"))
+                            .unwrap(),
                     );
                 }
                 let gene_name_b = {
@@ -1965,8 +1966,6 @@ impl Engine {
         }
         Ok(())
     }
-
-
 }
 
 fn combine_temporary_bams(
