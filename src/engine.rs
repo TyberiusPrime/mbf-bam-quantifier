@@ -1079,9 +1079,12 @@ impl Engine {
         };
         if let Some(umi_config) = umi_config.as_ref() {
             if matches!(umi_config.bucket, DeduplicationBucket::PerRegion) {
-                has_any_overlapping_features(&split_trees).context(
+                //I think this might be too conservative
+                //For one, I might have genes that 'overlap' in gene body, but don't in exons
+                //and what are we doing with multi hitting reads anyfay
+                /* has_any_overlapping_features(&split_trees).context(
                     "In PerRegion quantification, regions may not overlap. Fix your input GTF/GFF.",
-                )?
+                )? */
             }
         }
 
