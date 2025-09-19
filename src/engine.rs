@@ -28,6 +28,9 @@ pub type OurTree = IntervalTree<u32, (u32, Strand)>;
 
 pub type OurInterner = StringInterner<string_interner::backend::StringBackend>;
 
+fn cantor_pair(a: usize, b: usize) -> usize {
+    (a + b) * (a + b + 1) / 2 + b
+}
 pub fn build_trees_from_gtf(
     id_attribute: &str,
     gtf_entries: &GTFEntrys,
@@ -1596,7 +1599,7 @@ impl Engine {
                     match rh.0.len() {
                         //.0 is the 'correct orientation matches'
                         0 => start,
-                        _ => {
+                        1 => {
                             let region_no = rh.0[0].to_usize() + 1;
                             let region_no: i32 = region_no
                                 .try_into()
@@ -1605,13 +1608,24 @@ impl Engine {
                                 .checked_add(region_no)
                                 .expect("Genes in region, plus chunk size exceeding i32")
                         }
-                        /* _ => {
-                            panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier during region setup (for multi_region = 'count_both), or the read should not have had regions (for multi_region='drop').");
-                            // we're checking this before hand see any_overlapping_features
-                            // the other option would be to silently not count them (bad)
-                            // or somehow multiply them for both buckets (too much implementation)
-                            // so we got with explicitly not counting them
-                        } */
+                        _ => {
+                            //I need to map each combination of regions to a unique number
+                            let mut region_no: usize = 1
+                                + interner.len()
+                                + cantor_pair(rh.0[0].to_usize(), rh.0[1].to_usize());
+                            let region_no: i32 = region_no
+                                .try_into()
+                                .expect("(local) Region number (combination )should fit into i32");
+                            start
+                                .checked_add(region_no)
+                                .expect("Genes in region, plus chunk size exceeding i32")
+                        } /* _ => {
+                              panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier during region setup (for multi_region = 'count_both), or the read should not have had regions (for multi_region='drop').");
+                              // we're checking this before hand see any_overlapping_features
+                              // the other option would be to silently not count them (bad)
+                              // or somehow multiply them for both buckets (too much implementation)
+                              // so we got with explicitly not counting them
+                          } */
                     }
                 }
             };

@@ -31,6 +31,11 @@ but have a block in chunk X+N,
 we'd need to keep the lists around / shared between chunks,
 and I feel that's going to tank performance fiercely.
 
+Experimentation shows that we can use the PerRegion deduplication
+and get *almost* the same results. Only difference is, I believe
+that a read that's aligned twice, once so it matches a, and once where it matches a&b
+would have been counted twice in mbf-bam, but only once here.
+
 
 
 
