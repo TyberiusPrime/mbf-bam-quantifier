@@ -1015,25 +1015,54 @@ pub struct Engine {
     output: Arc<Mutex<Output>>,
 }
 
-fn has_any_overlapping_features(trees: &HashMap<String, (OurTree, Vec<String>)>) -> Result<()> {
-    for (chr, (tree, _ids)) in trees.iter() {
+fn overlapping_features(
+    trees: &HashMap<String, (OurTree, Vec<String>)>,
+    id_to_aggr_id: &HashMap<String, String>,
+) -> Vec<(String, String, String)> {
+    let mut res = Vec::new();
+    for (chr, (tree, ids)) in trees.iter() {
         for entry in tree.find(0..u32::MAX) {
-            let mut count = 0;
+            let mut gene_name_a = None;
             for entry2 in tree.find(entry.interval().clone()) {
-                count += 1;
-                if count > 1 {
-                    //we have more than one feature in this region, so we have overlapping features
-                    bail!(
-                        "Overlapping features found in {}: {:?} {:?}",
-                        chr,
-                        entry,
-                        entry2
+                if gene_name_a.is_none() {
+                    let exon_number = entry.data().0;
+                    let exon_id = &ids[exon_number as usize];
+                    gene_name_a = Some(
+                        id_to_aggr_id
+                            .get(exon_id)
+                            .expect("Could not find id to aggr_id?"),
                     );
+                }
+                let gene_name_b = {
+                    let exon_number = entry2.data().0;
+                    let exon_id = &ids[exon_number as usize];
+                    id_to_aggr_id
+                        .get(exon_id)
+                        .expect("Could not find id to aggr_id?")
+                };
+                if *gene_name_a.as_ref().unwrap() == gene_name_b {
+                    continue;
+                }
+                {
+                    //we have more than one feature in this region, so we have overlapping features
+                    let desc_a = format!(
+                        "{}:{}..{}",
+                        gene_name_a.unwrap(),
+                        entry.interval().start,
+                        entry.interval().end,
+                    );
+                    let desc_b = format!(
+                        "{}:{}..{}",
+                        gene_name_b,
+                        entry2.interval().start,
+                        entry2.interval().end,
+                    );
+                    res.push((chr.clone(), desc_a, desc_b));
                 }
             }
         }
     }
-    Ok(())
+    res
 }
 
 fn any_split_features(entries: &GTFEntrys, entry_id_attribute: &str) -> Result<bool> {
@@ -1081,10 +1110,34 @@ impl Engine {
             if matches!(umi_config.bucket, DeduplicationBucket::PerRegion) {
                 //I think this might be too conservative
                 //For one, I might have genes that 'overlap' in gene body, but don't in exons
-                //and what are we doing with multi hitting reads anyfay
-                /* has_any_overlapping_features(&split_trees).context(
-                    "In PerRegion quantification, regions may not overlap. Fix your input GTF/GFF.",
-                )? */
+                //and what are we doing with multi hitting reads anyway
+
+                let id_to_aggr_id = HashMap::from_iter(
+                    feature_entries
+                        .vec_attributes
+                        .get(entry_id_attribute)
+                        .context("entry without id attribute")?
+                        .iter()
+                        .zip(
+                            feature_entries
+                                .vec_attributes
+                                .get(aggregation_id_attribute)
+                                .context("entry without aggregation id attribute")?
+                                .iter(),
+                        )
+                        .map(|(a, b)| (a.clone(), b.clone())),
+                );
+                let overlap = overlapping_features(&feature_trees, &id_to_aggr_id);
+                if !overlap.is_empty() {
+                    eprintln!(
+                        "Overlapping features (considering aggregation attribute {})",
+                        aggregation_id_attribute
+                    );
+                    for (chr, id1, id2) in overlap {
+                        eprintln!("{}: {} and {}", chr, id1, id2);
+                    }
+                    bail!("In PerRegion quantification, regions may not overlap. Fix your input GTF/GFF.");
+                }
             }
         }
 
@@ -1533,6 +1586,7 @@ impl Engine {
                     let start = (chunk.stop + max_skip_len) as i32;
                     let rh = region_hit.as_ref().unwrap();
                     match rh.0.len() {
+                        //.0 is the 'correct orientation matches'
                         0 => start,
                         1 => {
                             let region_no = rh.0[0].to_usize() + 1;
