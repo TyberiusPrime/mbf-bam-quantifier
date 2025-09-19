@@ -237,8 +237,15 @@ pub struct Output {
 
     #[serde(default)]
     pub write_annotated_bam: bool,
+
+    /// for non-cellbased counts, output only 'matching' column?
     #[serde(default)]
     pub only_correct: bool,
+
+    ///output a table with effective lengths of each (aggregated) region
+    #[serde(default)]
+    pub output_effective_lengths: bool,
+
 }
 
 impl Output {

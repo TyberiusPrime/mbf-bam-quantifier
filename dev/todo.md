@@ -110,3 +110,6 @@ We have that in the strategy.
 - document the id_attribute, aggr_id_attribute functionality.
 id_attribute -> used in region dedup / featureCounts parity.
 aggr_id_attribute -> used to define what we add up, and where the splits can occur.
+
+
+- profile nested_intervals vs rust bio  intervaltrees

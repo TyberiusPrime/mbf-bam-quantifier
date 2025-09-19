@@ -1,11 +1,14 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     config::{self, Input, Output},
     engine,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use ex::Wrapper;
+use itertools::izip;
 use rust_htslib::bam::Read;
+use std::io::Write;
 
 fn create_output(
     mode: Option<config::OutputMode>,
@@ -26,12 +29,12 @@ fn create_output(
         config::OutputMode::SingleCell => {
             engine::Output::new_singlecell(output_directory.clone(), sorted_output_keys)?
         }
-        config::OutputMode::StartPositions => engine::Output::new_start_positions(
-            output_directory.join("start_positions.tsv"),
-        ),
-        config::OutputMode::Coverage => engine::Output::new_coverage(
-            output_directory.join("coverage.tsv"),
-        ),
+        config::OutputMode::StartPositions => {
+            engine::Output::new_start_positions(output_directory.join("start_positions.tsv"))
+        }
+        config::OutputMode::Coverage => {
+            engine::Output::new_coverage(output_directory.join("coverage.tsv"))
+        }
     })
 }
 
@@ -43,9 +46,6 @@ pub fn quantify(
     cell_barcode: Option<crate::barcodes::CellBarcodes>,
     strategy: crate::config::Strategy,
 ) -> anyhow::Result<()> {
-    // Here you would implement the quantification logic
-    // For now, we just return Ok to indicate success
-
     // for non-cellbased counts, output only 'matching' column?
     let single_column_counts_only =
         output.only_correct || matches!(strategy.direction, crate::config::MatchDirection::Ignore);
@@ -84,7 +84,7 @@ pub fn quantify(
                 keys.sort();
                 keys
             };
-            let output = create_output(
+            let engine_output = create_output(
                 output.mode,
                 &output.directory,
                 Some(sorted_output_keys.clone()),
@@ -92,7 +92,27 @@ pub fn quantify(
                 single_column_counts_only,
             )?;
 
-            engine::Engine::from_gtf(
+            if output.output_effective_lengths {
+                let lens  = estimate_effective_lengths(
+                            gtf_entries
+                                .get(gtf_config.feature.as_str())
+                                .with_context(|| {
+                                    format!(
+                                        "No GTF entries found for feature {}. Perhaps set subformat to GFF/GTF? ",
+                                        gtf_config.feature
+                                    )
+                                })?,
+                aggr_id_attribute,
+                )?;
+                write_lengths(
+                    &lens,
+                    aggr_id_attribute,
+                    &sorted_output_keys,
+                    &output.directory.join("effective_lengths.tsv"),
+                )?;
+            }
+
+            let e = engine::Engine::from_gtf(
                 gtf_entries,
                 gtf_config.feature.as_str(),
                 gtf_config.id_attribute.as_str(),
@@ -101,10 +121,14 @@ pub fn quantify(
                 umi_extraction,
                 cell_barcode,
                 strategy,
-                output,
-            )?
+                engine_output,
+            )?;
+            e
         }
         crate::config::Source::BamReferences => {
+            if output.output_effective_lengths {
+                bail!("TODO: output effective lengths when using BAM references");
+            }
             let bam = rust_htslib::bam::Reader::from_path(input.bam.as_str())
                 .context("Failed to open BAM file")?;
             let header = bam.header();
@@ -133,7 +157,13 @@ pub fn quantify(
                 .iter()
                 .map(|(name, _tid, _length)| name.clone())
                 .collect();
-            let output = create_output(
+
+            if output.output_effective_lengths {
+                bail!(
+                    "TODO: can not output effective lengths when using BAM references. Turn off output.output_effective_lengths"
+                );
+            }
+            let engine_output = create_output(
                 output.mode,
                 &output.directory,
                 Some(sorted_output_keys.clone()),
@@ -147,7 +177,7 @@ pub fn quantify(
                 umi_extraction,
                 cell_barcode,
                 strategy,
-                output,
+                engine_output,
             )?
         }
 
@@ -174,4 +204,56 @@ pub fn quantify(
     )?;
 
     Ok(())
+}
+
+fn write_lengths(
+    lens: &HashMap<String, usize>,
+    aggregation_id_attribute: &str,
+    sorted_output_keys: &[String],
+    output_filename: &std::path::PathBuf,
+) -> Result<()> {
+    let mut handle = std::io::BufWriter::new(ex::fs::File::create(output_filename)?.into_inner());
+    handle
+        .write_all(format!("{aggregation_id_attribute}\tlength\n").as_bytes())
+        .context("Failed to write to file")?;
+
+    for key in sorted_output_keys {
+        let len = lens.get(key).context("Missing entry in lengths, but in sorted output keys???")?;
+        handle
+            .write_all(format!("{key}\t{len}\n").as_bytes())
+            .context("Failed to write to file")?;
+    }
+
+    Ok(())
+
+}
+
+fn estimate_effective_lengths(
+    gtf_entries: &crate::gtf::GTFEntrys,
+    aggregation_id_attribute: &str,
+) -> Result<HashMap<String, usize>>{
+    let mut intervals = HashMap::new();
+    for (_seq_name_cat_id, gene_id, start, end, _strand) in izip!(
+        gtf_entries.seqname.values.iter(),
+        gtf_entries
+            .vec_attributes
+            .get(aggregation_id_attribute)
+            .context("Missing aggr_id attribute")?
+            .iter(),
+        gtf_entries.start.iter(),
+        gtf_entries.end.iter(),
+        gtf_entries.strand.iter(),
+    ) {
+        let key = gene_id.clone();
+        let entry = intervals.entry(key).or_insert_with(Vec::new);
+        entry.push(*start as u32..*end as u32);
+    }
+    let result = intervals
+        .into_iter()
+        .map(|(gene_id, intervals)| {
+            let ivset = nested_intervals::IntervalSet::new(&intervals).unwrap();
+            (gene_id, ivset.covered_units() as usize)
+        })
+        .collect();
+    Ok(result)
 }

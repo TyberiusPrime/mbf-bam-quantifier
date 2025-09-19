@@ -10,7 +10,7 @@ use string_interner::{StringInterner, Symbol};
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
-use crate::config::MatchDirection;
+use crate::config::{MatchDirection, MultiRegionHandling};
 use crate::deduplication::{AcceptReadResult, DedupPerBucket, DeduplicationBucket};
 use crate::extractors::Extractors;
 use crate::filters::ReadFilter;
@@ -1096,7 +1096,11 @@ impl Engine {
                 .remove(entry_kind)
                 .with_context(||format!("No GTF entries found for feature {}. Necessary to know where to split the genome productivly.", entry_kind))?;
 
-        let feature_trees = build_trees_from_gtf(entry_id_attribute, &feature_entries)
+        //we need to map them to the aggregation_id_attribute...
+        //what do we need the entry_id_attribute anyway?
+        //I think it's necessary in region dedup / feature counts reproduction.
+        //but here we should map to the aggregation_id_attribute, because that's what we sup up on.
+        let feature_trees = build_trees_from_gtf(aggregation_id_attribute, &feature_entries)
             .context("Failed to build feature trees from GTF")?;
 
         // where can we separate the chunks?
@@ -1108,36 +1112,38 @@ impl Engine {
         };
         if let Some(umi_config) = umi_config.as_ref() {
             if matches!(umi_config.bucket, DeduplicationBucket::PerRegion) {
-                //what are we doing with multi hitting reads anyway
-                //I think we're panic when they happen.
-                //
-                //at least it's too conservative when it's not considering the strand,
-                //and the user's counting strand aware...
-                let id_to_aggr_id = HashMap::from_iter(
-                    feature_entries
-                        .vec_attributes
-                        .get(entry_id_attribute)
-                        .context("entry without id attribute")?
-                        .iter()
-                        .zip(
-                            feature_entries
-                                .vec_attributes
-                                .get(aggregation_id_attribute)
-                                .context("entry without aggregation id attribute")?
-                                .iter(),
-                        )
-                        .map(|(a, b)| (a.clone(), b.clone())),
-                );
-                let overlap = overlapping_features(&feature_trees, &id_to_aggr_id);
-                if !overlap.is_empty() {
-                    eprintln!(
-                        "Overlapping features (considering aggregation attribute {})",
-                        aggregation_id_attribute
+                if !matches!(count_strategy.multi_region, MultiRegionHandling::Drop) {
+                    //what are we doing with multi hitting reads anyway
+                    //I think we're panic when they happen.
+                    //
+                    //at least it's too conservative when it's not considering the strand,
+                    //and the user's counting strand aware...
+                    let id_to_aggr_id = HashMap::from_iter(
+                        feature_entries
+                            .vec_attributes
+                            .get(entry_id_attribute)
+                            .context("entry without id attribute")?
+                            .iter()
+                            .zip(
+                                feature_entries
+                                    .vec_attributes
+                                    .get(aggregation_id_attribute)
+                                    .context("entry without aggregation id attribute")?
+                                    .iter(),
+                            )
+                            .map(|(a, b)| (a.clone(), b.clone())),
                     );
-                    for (chr, id1, id2) in overlap {
-                        eprintln!("{}: {} and {}", chr, id1, id2);
+                    let overlap = overlapping_features(&feature_trees, &id_to_aggr_id);
+                    if !overlap.is_empty() {
+                        eprintln!(
+                            "Overlapping features (considering aggregation attribute {})",
+                            aggregation_id_attribute
+                        );
+                        for (chr, id1, id2) in overlap {
+                            eprintln!("{}: {} and {}", chr, id1, id2);
+                        }
+                        bail!("In PerRegion quantification, if multi_region is not 'drop', regions may not overlap. Fix your input GTF/GFF.");
                     }
-                    bail!("In PerRegion quantification, regions may not overlap. Fix your input GTF/GFF.");
                 }
             }
         }
@@ -1599,7 +1605,7 @@ impl Engine {
                                 .expect("Genes in region, plus chunk size exceeding i32")
                         }
                         _ => {
-                            panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier (bug).");
+                            panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier during region setup (for multi_region = 'count_both), or the read should not have had regions (for multi_region='drop').");
                             // we're checking this before hand see any_overlapping_features
                             // the other option would be to silently not count them (bad)
                             // or somehow multiply them for both buckets (too much implementation)
@@ -1959,6 +1965,8 @@ impl Engine {
         }
         Ok(())
     }
+
+
 }
 
 fn combine_temporary_bams(
