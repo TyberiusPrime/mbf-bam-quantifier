@@ -1113,7 +1113,7 @@ impl Engine {
         };
         if let Some(umi_config) = umi_config.as_ref() {
             if matches!(umi_config.bucket, DeduplicationBucket::PerRegion) {
-                if !matches!(count_strategy.multi_region, MultiRegionHandling::Drop) {
+                /* if !matches!(count_strategy.multi_region, MultiRegionHandling::Drop) {
                     //what are we doing with multi hitting reads anyway
                     //I think we're panic when they happen.
                     //
@@ -1145,7 +1145,7 @@ impl Engine {
                         }
                         bail!("In PerRegion quantification, if multi_region is not 'drop', regions may not overlap. Fix your input GTF/GFF.");
                     }
-                }
+                } */
             }
         }
 
@@ -1596,7 +1596,7 @@ impl Engine {
                     match rh.0.len() {
                         //.0 is the 'correct orientation matches'
                         0 => start,
-                        1 => {
+                        _ => {
                             let region_no = rh.0[0].to_usize() + 1;
                             let region_no: i32 = region_no
                                 .try_into()
@@ -1605,13 +1605,13 @@ impl Engine {
                                 .checked_add(region_no)
                                 .expect("Genes in region, plus chunk size exceeding i32")
                         }
-                        _ => {
+                        /* _ => {
                             panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier during region setup (for multi_region = 'count_both), or the read should not have had regions (for multi_region='drop').");
                             // we're checking this before hand see any_overlapping_features
                             // the other option would be to silently not count them (bad)
                             // or somehow multiply them for both buckets (too much implementation)
                             // so we got with explicitly not counting them
-                        }
+                        } */
                     }
                 }
             };
