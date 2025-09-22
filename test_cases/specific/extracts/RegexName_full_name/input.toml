@@ -8,7 +8,6 @@
                 subformat = "GTF"
                 feature = "exon"
                 id_attribute = "gene_id"
-                aggr_id_attribute = "gene_id"
                 duplicate_handling = "Collapse"
 
             [umi]

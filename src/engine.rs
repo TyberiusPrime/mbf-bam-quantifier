@@ -10,7 +10,7 @@ use string_interner::{StringInterner, Symbol};
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
-use crate::config::{MatchDirection, MultiRegionHandling};
+use crate::config::{MatchDirection};
 use crate::deduplication::{AcceptReadResult, DedupPerBucket, DeduplicationBucket};
 use crate::extractors::Extractors;
 use crate::filters::ReadFilter;
@@ -1088,7 +1088,7 @@ impl Engine {
     pub fn from_gtf(
         mut gtf_entries: HashMap<String, GTFEntrys>,
         entry_kind: &str,
-        entry_id_attribute: &str,
+        //entry_id_attribute: &str,
         aggregation_id_attribute: &str,
         filters: Vec<crate::filters::Filter>,
         umi_config: Option<crate::config::UmiConfig>,
@@ -1610,7 +1610,7 @@ impl Engine {
                         }
                         _ => {
                             //I need to map each combination of regions to a unique number
-                            let mut region_no: usize = 1
+                            let region_no: usize = 1
                                 + interner.len()
                                 + cantor_pair(rh.0[0].to_usize(), rh.0[1].to_usize());
                             let region_no: i32 = region_no

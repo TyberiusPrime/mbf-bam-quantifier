@@ -52,10 +52,8 @@ pub fn quantify(
 
     let our_engine = match input.source {
         crate::config::Source::Gtf(ref gtf_config) => {
-            let aggr_id_attribute = gtf_config
-                .aggr_id_attribute
-                .as_deref()
-                .unwrap_or(gtf_config.id_attribute.as_str());
+            let aggr_id_attribute = &gtf_config
+                .id_attribute;
 
             let gtf_entries = input.read_gtf(gtf_config.duplicate_handling, aggr_id_attribute)?;
             if gtf_entries.is_empty() {
@@ -115,7 +113,7 @@ pub fn quantify(
             let e = engine::Engine::from_gtf(
                 gtf_entries,
                 gtf_config.feature.as_str(),
-                gtf_config.id_attribute.as_str(),
+                //gtf_config.id_attribute.as_str(),
                 aggr_id_attribute,
                 filters,
                 umi_extraction,
