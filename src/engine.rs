@@ -10,7 +10,7 @@ use string_interner::{StringInterner, Symbol};
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
-use crate::config::{MatchDirection};
+use crate::config::MatchDirection;
 use crate::deduplication::{AcceptReadResult, DedupPerBucket, DeduplicationBucket};
 use crate::extractors::Extractors;
 use crate::filters::ReadFilter;
@@ -1115,7 +1115,10 @@ impl Engine {
         };
         if let Some(umi_config) = umi_config.as_ref() {
             if matches!(umi_config.bucket, DeduplicationBucket::PerRegion) {
-                /* if !matches!(count_strategy.multi_region, MultiRegionHandling::Drop) {
+                if !matches!(
+                    count_strategy.multi_region,
+                    crate::config::MultiRegionHandling::Drop
+                ) {
                     //what are we doing with multi hitting reads anyway
                     //I think we're panic when they happen.
                     //
@@ -1124,7 +1127,7 @@ impl Engine {
                     let id_to_aggr_id = HashMap::from_iter(
                         feature_entries
                             .vec_attributes
-                            .get(entry_id_attribute)
+                            .get(aggregation_id_attribute)
                             .context("entry without id attribute")?
                             .iter()
                             .zip(
@@ -1147,7 +1150,7 @@ impl Engine {
                         }
                         bail!("In PerRegion quantification, if multi_region is not 'drop', regions may not overlap. Fix your input GTF/GFF.");
                     }
-                } */
+                }
             }
         }
 
@@ -1607,6 +1610,7 @@ impl Engine {
                                 .checked_add(region_no)
                                 .expect("Genes in region, plus chunk size exceeding i32")
                         }
+                        /*
                         _ => {
                             //I need to map each combination of regions to a unique number
                             let region_no: usize = 1
@@ -1618,13 +1622,14 @@ impl Engine {
                             start
                                 .checked_add(region_no)
                                 .expect("Genes in region, plus chunk size exceeding i32")
-                        } /* _ => {
-                              panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier during region setup (for multi_region = 'count_both), or the read should not have had regions (for multi_region='drop').");
-                              // we're checking this before hand see any_overlapping_features
-                              // the other option would be to silently not count them (bad)
-                              // or somehow multiply them for both buckets (too much implementation)
-                              // so we got with explicitly not counting them
-                          } */
+                        }*/
+                        _ => {
+                            panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier during region setup (for multi_region = 'count_both), or the read should not have had regions (for multi_region='drop').");
+                            // we're checking this before hand see any_overlapping_features
+                            // the other option would be to silently not count them (bad)
+                            // or somehow multiply them for both buckets (too much implementation)
+                            // so we got with explicitly not counting them
+                        }
                     }
                 }
             };
