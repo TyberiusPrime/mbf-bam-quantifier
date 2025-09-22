@@ -1088,7 +1088,6 @@ impl Engine {
     pub fn from_gtf(
         mut gtf_entries: HashMap<String, GTFEntrys>,
         entry_kind: &str,
-        //entry_id_attribute: &str,
         aggregation_id_attribute: &str,
         filters: Vec<crate::filters::Filter>,
         umi_config: Option<crate::config::UmiConfig>,
@@ -2353,17 +2352,20 @@ impl ReferenceMatcher {
     )> {
         let mut genes_hit_correct = Vec::new();
         let mut genes_hit_reverse = Vec::new();
-        if match (&self.direction, read.is_reverse()) {
-            (MatchDirection::Ignore, _) => true,
-            (MatchDirection::Forward, true) => false,
-            (MatchDirection::Forward, false) => true,
-            (MatchDirection::Reverse, true) => true,
-            (MatchDirection::Reverse, false) => false,
-        } {
-            genes_hit_correct.push(interner.get_or_intern(&chunk.chr));
-        } else {
-            genes_hit_reverse.push(interner.get_or_intern(&chunk.chr));
+        if !read.is_unmapped() {
+            if match (&self.direction, read.is_reverse()) {
+                (MatchDirection::Ignore, _) => true,
+                (MatchDirection::Forward, true) => false,
+                (MatchDirection::Forward, false) => true,
+                (MatchDirection::Reverse, true) => true,
+                (MatchDirection::Reverse, false) => false,
+            } {
+                genes_hit_correct.push(interner.get_or_intern(&chunk.chr));
+            } else {
+                genes_hit_reverse.push(interner.get_or_intern(&chunk.chr));
+            }
         }
+
         Ok((genes_hit_correct, genes_hit_reverse))
     }
 }

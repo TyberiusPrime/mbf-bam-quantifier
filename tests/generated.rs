@@ -138,6 +138,11 @@ fn test_case_source_reference_reference_reverse_only() {
 }
 
 #[test]
+fn test_case_specific_bam_reference_and_unmap() {
+    run_test(std::path::Path::new("test_cases/specific/bam_reference_and_unmap"));
+}
+
+#[test]
 fn test_case_specific_external_umi_thresholder_command() {
     run_test(std::path::Path::new("test_cases/specific/external_umi_thresholder_command"));
 }

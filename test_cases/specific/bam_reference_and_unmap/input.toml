@@ -1,0 +1,14 @@
+# This file contains unmapped reads that have an Rname.
+# we need to make sure we don't count them..
+
+[input]
+    bam = "input.level-9.bam"
+
+[input.source]
+	mode = "bam_references"
+
+[strategy]
+   direction ='ignore'
+
+[output]
+   directory = "output"
