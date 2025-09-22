@@ -104,12 +104,11 @@ Otherwise we might process the fake '0' position somewhere after max_split_size 
 
 (missing final ;)
 
-- what's the unstranded / inverse stranded story.
-We have that in the strategy.
-
 - document the id_attribute, aggr_id_attribute functionality.
 id_attribute -> used in region dedup / featureCounts parity.
 aggr_id_attribute -> used to define what we add up, and where the splits can occur.
 
 
 - profile nested_intervals vs rust bio  intervaltrees
+
+- test that read1 filter and keep_only actually works (seems only read2 and remove works?!)
