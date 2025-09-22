@@ -58,6 +58,9 @@ pub enum Filter {
     #[serde(alias = "read2")]
     Read2(Read2),
 
+    #[serde(alias = "flags")]
+    Flags(Flags),
+
     #[serde(alias = "spliced")]
     Spliced(Spliced),
 
@@ -104,10 +107,11 @@ pub struct NonPrimary {
 
 impl ReadFilter for NonPrimary {
     fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
-        if read.is_secondary() {
-            return self.action == KeepOrRemove::Remove;
+        let hit = read.is_secondary();
+        match self.action {
+            KeepOrRemove::KeepOnly => !hit,
+            KeepOrRemove::Remove => hit,
         }
-        false
     }
 }
 
@@ -118,10 +122,11 @@ pub struct Read1 {
 
 impl ReadFilter for Read1 {
     fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
-        if read.is_first_in_template() {
-            return self.action == KeepOrRemove::Remove;
+        let hit = read.is_first_in_template();
+        match self.action {
+            KeepOrRemove::KeepOnly => !hit,
+            KeepOrRemove::Remove => hit,
         }
-        false
     }
 }
 #[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
@@ -131,10 +136,27 @@ pub struct Read2 {
 
 impl ReadFilter for Read2 {
     fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
-        if read.is_last_in_template() {
-            return self.action == KeepOrRemove::Remove;
+        let hit = read.is_last_in_template();
+        match self.action {
+            KeepOrRemove::KeepOnly => !hit,
+            KeepOrRemove::Remove => hit,
         }
-        false
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone, serde::Serialize)]
+pub struct Flags {
+    pub action: KeepOrRemove,
+    pub flags: u16,
+}
+
+impl ReadFilter for Flags {
+    fn remove_read(&self, read: &rust_htslib::bam::record::Record) -> bool {
+        let hit = (read.flags() & self.flags) == self.flags;
+        match self.action {
+            KeepOrRemove::KeepOnly => !hit,
+            KeepOrRemove::Remove => hit,
+        }
     }
 }
 
@@ -217,15 +239,14 @@ impl ReadFilter for NInUmi {
         _genes_hit_reverse: &Vec<SymbolU32>,
         _interner: &crate::engine::OurInterner,
     ) -> bool {
-        if let Some(umi) = umi {
-            let hit = umi.iter().any(|x| *x == b'N');
-
-            match self.action {
-                KeepOrRemove::KeepOnly => !hit,
-                KeepOrRemove::Remove => hit,
-            }
+        let hit = if let Some(umi) = umi {
+            umi.iter().any(|x| *x == b'N')
         } else {
             false
+        };
+        match self.action {
+            KeepOrRemove::KeepOnly => !hit,
+            KeepOrRemove::Remove => hit,
         }
     }
 }
@@ -245,17 +266,21 @@ impl ReadFilter for UmiHomopolymer {
         _genes_hit_reverse: &Vec<SymbolU32>,
         _interner: &crate::engine::OurInterner,
     ) -> bool {
-        if let Some(umi) = umi {
+        let hit = if let Some(umi) = umi {
             let mut it = umi.iter();
             if let Some(first) = umi.first() {
-                let hit = it.all(|&x| x == *first);
-                return match self.action {
-                    KeepOrRemove::KeepOnly => !hit,
-                    KeepOrRemove::Remove => hit,
-                };
+                it.all(|&x| x == *first)
+            } else {
+                false
             }
-        }
-        false
+        } else {
+            false
+        };
+
+        return match self.action {
+            KeepOrRemove::KeepOnly => !hit,
+            KeepOrRemove::Remove => hit,
+        };
     }
 }
 
@@ -274,15 +299,16 @@ impl ReadFilter for UmiAllA {
         _genes_hit_reverse: &Vec<SymbolU32>,
         _interner: &crate::engine::OurInterner,
     ) -> bool {
-        if let Some(umi) = umi {
+        let hit = if let Some(umi) = umi {
             let mut it = umi.iter();
-            let hit = it.all(|&x| x == b'A');
-            return match self.action {
-                KeepOrRemove::KeepOnly => !hit,
-                KeepOrRemove::Remove => hit,
-            };
-        }
-        false
+            it.all(|&x| x == b'A')
+        } else {
+            false
+        };
+        return match self.action {
+            KeepOrRemove::KeepOnly => !hit,
+            KeepOrRemove::Remove => hit,
+        };
     }
 }
 

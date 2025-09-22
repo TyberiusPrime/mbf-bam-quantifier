@@ -158,8 +158,38 @@ fn test_case_specific_extracts_regexname_full_name() {
 }
 
 #[test]
+fn test_case_specific_filters_flags_keep_read1() {
+    run_test(std::path::Path::new("test_cases/specific/filters/flags_keep_read1"));
+}
+
+#[test]
+fn test_case_specific_filters_flags_remove_read1() {
+    run_test(std::path::Path::new("test_cases/specific/filters/flags_remove_read1"));
+}
+
+#[test]
 fn test_case_specific_filters_min_aligned_len() {
     run_test(std::path::Path::new("test_cases/specific/filters/min_aligned_len"));
+}
+
+#[test]
+fn test_case_specific_filters_read1_keep() {
+    run_test(std::path::Path::new("test_cases/specific/filters/read1_keep"));
+}
+
+#[test]
+fn test_case_specific_filters_read1_remove() {
+    run_test(std::path::Path::new("test_cases/specific/filters/read1_remove"));
+}
+
+#[test]
+fn test_case_specific_filters_read2_keep() {
+    run_test(std::path::Path::new("test_cases/specific/filters/read2_keep"));
+}
+
+#[test]
+fn test_case_specific_filters_read2_remove() {
+    run_test(std::path::Path::new("test_cases/specific/filters/read2_remove"));
 }
 
 #[test]

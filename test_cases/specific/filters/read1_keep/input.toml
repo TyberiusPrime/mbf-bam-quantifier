@@ -1,0 +1,20 @@
+# a basic reproduction of samtools idxstats
+
+[input]
+    bam = "input.level-9.bam"
+
+[input.source]
+	mode = "gtf"
+    filename = "input.gtf"
+    feature = 'contig'
+    id_attribute = 'contig_id'
+
+[[filter]]
+     mode = "read1"
+     action = "keep_only"
+
+[strategy]
+   direction ='ignore'
+
+[output]
+   directory = "output"

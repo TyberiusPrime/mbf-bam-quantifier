@@ -1,0 +1,2 @@
+# 1	ensembl_havana	contig	1211340	1214153	.	-	.	contig_id "ENSG00000186827"; contig_version "11"; contig_name "TNFRSF4"; contig_source "ensembl_havana"; contig_biotype "protein_coding";
+chrM	ignored	contig	1	26571	.	.	.	contig_id "chrM"

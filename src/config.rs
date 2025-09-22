@@ -194,7 +194,6 @@ pub struct GTFConfig {
     pub subformat: GTFFormat,
     pub feature: String,
     pub id_attribute: String,
-    pub aggr_id_attribute: Option<String>,
     #[serde(default)]
     pub duplicate_handling: DuplicateHandling,
 }
@@ -350,11 +349,6 @@ impl Input {
             let accepted_features = &[&gtf_config.feature];
             let accepted_tags: HashSet<String> = vec![
                 gtf_config.id_attribute.to_string(),
-                gtf_config
-                    .aggr_id_attribute
-                    .as_ref()
-                    .unwrap_or(&gtf_config.id_attribute)
-                    .to_string(),
                 duplication_detection_id_attribute.to_string(),
             ]
             .into_iter()

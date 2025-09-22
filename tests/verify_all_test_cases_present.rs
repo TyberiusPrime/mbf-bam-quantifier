@@ -4,8 +4,7 @@ use walkdir::WalkDir;
 
 #[test]
 fn all_test_cases_are_generated() {
-    let generated = fs::read_to_string("tests/generated.rs")
-        .expect("Failed to read generated.rs");
+    let generated = fs::read_to_string("tests/generated.rs").expect("Failed to read generated.rs");
 
     let mut expected_tests = HashSet::new();
 
@@ -26,15 +25,13 @@ fn all_test_cases_are_generated() {
             .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
             .to_lowercase();
 
-        expected_tests.insert(format!("fn test_case_{}()", name));
+        expected_tests.insert(format!("fn test_case_{name}()"));
     }
 
     for test_fn in expected_tests {
         assert!(
             generated.contains(&test_fn),
-            "Missing test function: {}. Rerun ./dev/update_tests.py",
-            test_fn
+            "Missing test function: {test_fn}. Rerun ./dev/update_tests.py",
         );
     }
 }
-

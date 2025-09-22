@@ -111,4 +111,3 @@ aggr_id_attribute -> used to define what we add up, and where the splits can occ
 
 - profile nested_intervals vs rust bio  intervaltrees
 
-- test that read1 filter and keep_only actually works (seems only read2 and remove works?!)
