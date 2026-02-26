@@ -111,3 +111,5 @@ aggr_id_attribute -> used to define what we add up, and where the splits can occ
 
 - profile nested_intervals vs rust bio  intervaltrees
 
+
+- detect when barcode length != what's in the allowed list, before it crashes...

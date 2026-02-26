@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::{collections::HashSet, path::PathBuf};
 
 use crate::extractors::{self, Extractors};
@@ -47,6 +48,7 @@ pub struct CellBarcodes {
     extract: extractors::Extractor,
     #[serde(deserialize_with = "u8_from_char_or_number")]
     separator_char: u8,  //todo: make optional?
+    separator_char: u8, //todo: make optional?
     #[serde(default)]
     max_hamming: u16,
     #[serde(default)]
@@ -62,11 +64,16 @@ impl CellBarcodes {
             .allowlist_files
             .iter()
             .map(|file| {
-                Ok(std::fs::read_to_string(file)
+                let res = std::fs::read_to_string(file)
                     .with_context(|| format!("Failed to read allowlist file: {:?}", file))?
                     .lines()
                     .map(|line| line.trim().as_bytes().to_vec())
-                    .collect::<HashSet<_>>())
+                    .collect::<HashSet<_>>();
+                let lengths_observed: HashSet<usize> = res.iter().map(|x| x.len()).collect();
+                if lengths_observed.len() >1 {
+                    bail!("More than one length in allow list file. Barcodes must be of uniform length. Observed: {:?}", lengths_observed);
+                }
+                Ok(res)
             })
             .collect();
         self.allowlists = wl?;
