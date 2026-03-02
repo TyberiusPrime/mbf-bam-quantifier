@@ -794,9 +794,9 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 
 [[package]]
 name = "hamming-resonate"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fc5f8de861b5ded4f112528de507c66cfdb641a19d01d550a74bcc0f9f9c530"
+checksum = "08243f33c86a72677eec020f80f525f6bc99c4e10d8b44291f49368d41545105"
 dependencies = [
  "bstr",
  "rayon",
