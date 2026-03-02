@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
 use bstr::{BStr, BString};
 use hamming_resonate::HammingResonatorWeighted;
-use std::{collections::HashSet, path::PathBuf};
+use rust_htslib::htslib::htsExactFormat_unknown_format;
+use std::{collections::{HashMap, HashSet}, path::PathBuf};
 
 use crate::extractors::{self, Extractors};
 use serde::Deserializer;
@@ -44,16 +45,14 @@ where
 type Whitelist = hamming_resonate::HammingResonatorWeighted;
 
 #[derive(serde::Deserialize, Debug)]
-enum AllowListMode 
-    {
-        /// check each read against the allow list and correct if possible
-        PerRead,
-        /// First, count everything. Then correct 'virtual cells'
-        /// to the closest barcode (within max_hamming distance), breaking ties towards
-        /// barcodes with more counts.
-        PerBarcode
-
-    }
+pub(crate) enum AllowListMode {
+    /// check each read against the allow list and correct if possible
+    PerRead,
+    /// First, count everything. Then correct 'virtual cells'
+    /// to the closest barcode (within max_hamming distance), breaking ties towards
+    /// barcodes with more counts.
+    PerBarcode,
+}
 
 #[derive(serde::Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
@@ -65,9 +64,9 @@ pub struct CellBarcodes {
     max_hamming: u16,
     #[serde(default)]
     allowlist_files: Vec<PathBuf>,
-    allowlist_mode: AllowListMode,
+    pub(crate) allowlist_mode: AllowListMode,
     #[serde(skip)]
-    allowlists: Vec<Whitelist>,
+    pub(crate) allowlists: Vec<Whitelist>,
 }
 
 impl CellBarcodes {
@@ -120,9 +119,7 @@ impl CellBarcodes {
         let parts = barcode.split(|&b| b == self.separator_char);
         let mut out = Vec::new();
         for (part, allowlist) in parts.zip(self.allowlists.iter()) {
-            let best = allowlist
-                .query_best(BStr::new(part))
-                .ok()?; // length mismatch -> no match
+            let best = allowlist.query_best(BStr::new(part)).ok()?; // length mismatch -> no match
             match best {
                 Some(best) => {
                     if !out.is_empty() {
@@ -135,4 +132,80 @@ impl CellBarcodes {
         }
         Some(out)
     }
+
+    pub fn correct_mtx_per_barcode(
+        &self,
+        feature_filename: &PathBuf,
+        barcode_filename: &PathBuf,
+        matrix_filename: &PathBuf,
+    ) -> Result<()> {
+        let raw_dir = matrix_filename
+            .parent()
+            .map(|p| p.join("raw"))
+            .unwrap_or_else(|| PathBuf::from("."))
+        ;
+        std::fs::create_dir_all(&raw_dir)
+            .with_context(|| format!("Failed to create raw directory: {:?}", raw_dir))?;
+        //now let's move all three files into the raw dir
+        let raw_feature_filename = raw_dir.join(feature_filename.file_name().unwrap());
+        std::fs::rename(feature_filename, &raw_feature_filename).with_context(|| {
+            format!(
+                "Failed to move feature file to raw directory: {:?} -> {:?}",
+                feature_filename, raw_feature_filename
+            )
+        })?;
+        let raw_barcode_filename = raw_dir.join(barcode_filename.file_name().unwrap());
+        std::fs::rename(barcode_filename, &raw_barcode_filename).with_context(|| {
+            format!(
+                "Failed to move barcode file to raw directory: {:?} -> {:?}",
+                barcode_filename, raw_barcode_filename
+            )
+        })?;
+        let raw_matrix_filename = raw_dir.join(matrix_filename.file_name().unwrap());
+
+        //now the features stay the same.
+        //so just symlink the file
+        std::os::unix::fs::symlink(&raw_feature_filename, feature_filename).with_context(|| {
+            format!(
+                "Failed to symlink feature file: {:?} -> {:?}",
+                raw_feature_filename, feature_filename
+            )
+        })?;
+
+        let barcodes: Vec<BString> = {
+            //read all the lines
+            std::fs::read_to_string(&raw_barcode_filename)
+                .with_context(|| {
+                    format!("Failed to read barcode file: {:?}", raw_barcode_filename)
+                })?
+                .lines()
+                .map(|line| BString::from(line.as_bytes()))
+                .collect()
+        };
+        let barcode_to_column: HashMap<&BStr, usize> = todo!();
+        let matrix_coo = read_mtx(&raw_matrix_filename)?;
+        //sum up the matrix in barcode direction.
+        let barcode_counts = todo!();//column sums
+        //now convert the existing HammingResonatorWeighted (which has all 0 scores)
+        //into one where the scores == barcode counts.
+
+        //then go through all the barcodes.
+        //if the best matching in the HammingResonatorWeighted has a distance > 0,
+        //we need to fold it's row into the one of the best match (add)
+        //otherwise, we need to mark it as being kept.
+        //
+        //then filter it those being kept,
+        //and write it out.
+        //Also write out a new barcode file
+
+
+        let mut keep = Vec::new();
+
+
+        Ok(())
+    }
+}
+
+fn read_mtx(filename: &PathBuf) -> Result<nalgebra_sparse::CooMatrix<i64>> {
+    Ok(nalgebra_sparse::io::load_coo_from_matrix_market_file(filename)?)
 }

@@ -10,6 +10,7 @@ use string_interner::{StringInterner, Symbol};
 mod chunked_genome;
 
 use crate::bam_ext::BamRecordExtensions;
+use crate::barcodes::CellBarcodes;
 use crate::config::MatchDirection;
 use crate::deduplication::{AcceptReadResult, DedupPerBucket, DeduplicationBucket};
 use crate::extractors::Extractors;
@@ -733,7 +734,7 @@ impl Output {
     }
 
     /// all chunks have been collected. produce the final output file
-    fn finish(self, chunk_names: &[String]) -> Result<()> {
+    fn finish(self, chunk_names: &[String], cell_barcodes: Option<&CellBarcodes>) -> Result<()> {
         measure_time::info_time!("Preparing final output");
         match self {
             Output::NoOutput => {
@@ -909,6 +910,18 @@ impl Output {
 
                 Self::write_stats(&matrix_filename, &stat_counter)
                     .context("Failed to write stats file")?;
+                if let Some(cell_barcodes) = cell_barcodes
+                    && matches!(
+                        cell_barcodes.allowlist_mode,
+                        crate::barcodes::AllowListMode::PerBarcode
+                    )
+                {
+                    cell_barcodes.correct_mtx_per_barcode(
+                        &features_filename,
+                        &barcodes_filename,
+                        &matrix_filename,
+                    )?;
+                }
             }
             Output::Coverage {
                 ref counter,
@@ -1458,7 +1471,7 @@ impl Engine {
         let output = output
             .into_inner()
             .context("Failed to unlock output mutex")?;
-        output.finish(&chunk_names)?;
+        output.finish(&chunk_names, self.cell_barcode.as_ref())?;
 
         if let Some(OutputBamInfo {
             output_bam_path,
