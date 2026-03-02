@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/release-24.11"; # that's 23.05
+    nixpkgs.url = "github:NixOS/nixpkgs/release-25.11"; # that's 23.05
     utils.url = "github:numtide/flake-utils";
     naersk.url = "github:nmattia/naersk";
     naersk.inputs.nixpkgs.follows = "nixpkgs";
@@ -19,7 +19,7 @@
       #pkgs = nixpkgs.legacyPackages."${system}";
       overlays = [(import rust-overlay)];
       pkgs = import nixpkgs {inherit system overlays;};
-      rust = pkgs.rust-bin.stable."1.86.0".default.override {
+      rust = pkgs.rust-bin.stable."1.93.1".default.override {
         targets = ["x86_64-unknown-linux-musl"];
         extensions = ["llvm-tools-preview"];
       };

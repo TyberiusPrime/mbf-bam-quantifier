@@ -1,5 +1,4 @@
-use anyhow::{Context, Result};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{collections::HashSet, path::PathBuf};
 
 use crate::extractors::{self, Extractors};
@@ -47,7 +46,6 @@ type Whitelist = HashSet<Vec<u8>>;
 pub struct CellBarcodes {
     extract: extractors::Extractor,
     #[serde(deserialize_with = "u8_from_char_or_number")]
-    separator_char: u8,  //todo: make optional?
     separator_char: u8, //todo: make optional?
     #[serde(default)]
     max_hamming: u16,

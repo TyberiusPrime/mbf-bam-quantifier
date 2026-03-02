@@ -19,7 +19,7 @@ docs/public
 Session.vim
 .aider*
 tests/failures
-**/actual/**
+**/actual/*
 *bam.temp
 **/ignore_*
 tests/generated_by_build.rs

@@ -10,6 +10,7 @@ default_job = "check"
 [jobs.check]
 command = ["cargo", "check", "--color", "always"]
 need_stdout = false
+watch = ["*.toml"]
 
 [jobs.check-all]
 command = ["cargo", "check", "--all-targets", "--color", "always"]
@@ -33,7 +34,6 @@ command = [
     "cargo", "test", "--color", "always",
     "--", "--color", "always", # see https://github.com/Canop/bacon/issues/124
 ]
-watch = ["test_cases"]
 need_stdout = true
 
 [jobs.doc]

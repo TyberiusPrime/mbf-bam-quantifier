@@ -66,7 +66,7 @@ impl<'a> ChunkedGenome<'a> {
         }
     } */
 
-    pub fn iter(&self) -> ChunkedGenomeIterator {
+    pub fn iter(&self) -> ChunkedGenomeIterator<'_> {
         ChunkedGenomeIterator {
             cg: self,
             it: self.chromosomes.iter(),
