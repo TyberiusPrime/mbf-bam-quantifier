@@ -39,7 +39,7 @@ where
     deserializer.deserialize_any(Visitor)
 }
 
-type Whitelist = HashSet<Vec<u8>>;
+type Whitelist = (HashSet<Vec<u8>>, Vec<Vec<u8>>);
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
@@ -66,12 +66,16 @@ impl CellBarcodes {
                     .with_context(|| format!("Failed to read allowlist file: {:?}", file))?
                     .lines()
                     .map(|line| line.trim().as_bytes().to_vec())
-                    .collect::<HashSet<_>>();
+                    .collect::<Vec<_>>();
                 let lengths_observed: HashSet<usize> = res.iter().map(|x| x.len()).collect();
                 if lengths_observed.len() >1 {
                     bail!("More than one length in allow list file. Barcodes must be of uniform length. Observed: {:?}", lengths_observed);
                 }
-                Ok(res)
+                Ok((
+                    res.iter().map(|x| x.clone()).collect(),
+                    res)
+                )
+
             })
             .collect();
         self.allowlists = wl?;
@@ -98,13 +102,13 @@ impl CellBarcodes {
         let parts = barcode.split(|&b| b == self.separator_char);
         let mut out = Vec::new();
         for (part, allowlist) in parts.zip(self.allowlists.iter()) {
-            if allowlist.contains(part) {
+            if allowlist.0.contains(part) {
                 if !out.is_empty() {
                     out.push(self.separator_char);
                 }
                 out.extend(part);
             } else {
-                match self.find_closest_by_hamming(part, allowlist) {
+                match self.find_closest_by_hamming(part, &allowlist.1) {
                     Some(corrected) => {
                         if !out.is_empty() {
                             out.push(self.separator_char);
@@ -121,7 +125,7 @@ impl CellBarcodes {
     fn find_closest_by_hamming<'a>(
         &self,
         part: &[u8],
-        allowlist: &'a Whitelist,
+        allowlist: &'a Vec<Vec<u8>>,
     ) -> Option<&'a [u8]> {
         use bio::alignment::distance::hamming;
         if self.max_hamming == 0 {
