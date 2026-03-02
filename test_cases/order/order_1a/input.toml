@@ -8,6 +8,7 @@ mode = "bam_references"
 [cell_barcodes]
 separator_char = "-"
 allowlist_files = ["input_BD_1.txt","input_BD_2.txt","input_BD_3.txt"]
+allowlist_mode = "PerRead"
 
 [cell_barcodes.extract]
 mode = "RegexName"

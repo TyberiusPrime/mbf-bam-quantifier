@@ -21,6 +21,7 @@
 		'input_BD_CLS2.txt',
 		'input_BD_CLS3.txt',
 	]
+    allowlist_mode = "PerRead"
 [umi]
 	extract = {mode = 'Tag', tag = 'UB'}
 	strategy.kind = "unique"

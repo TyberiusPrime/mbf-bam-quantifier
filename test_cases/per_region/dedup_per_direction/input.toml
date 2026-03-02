@@ -12,6 +12,7 @@
 	extract = {mode = "Tag", tag = 'CB'}
     separator_char = '_'
 	max_hamming = 0
+    allowlist_mode = "PerRead"
 
 [umi]
 	extract = { mode = 'Tag', tag = 'UB'}

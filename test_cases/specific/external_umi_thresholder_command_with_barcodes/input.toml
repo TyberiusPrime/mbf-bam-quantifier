@@ -10,6 +10,7 @@
 	tag = 'XF'
 
 [cell_barcodes]
+    allowlist_mode = "PerRead"
 	separator_char = '-'
 [cell_barcodes.extract]
 	mode = "RegexName"

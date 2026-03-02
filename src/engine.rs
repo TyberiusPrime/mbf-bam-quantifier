@@ -15,10 +15,10 @@ use crate::deduplication::{AcceptReadResult, DedupPerBucket, DeduplicationBucket
 use crate::extractors::Extractors;
 use crate::filters::ReadFilter;
 use crate::gtf::Strand;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bio::data_structures::interval_tree::IntervalTree;
 use chunked_genome::{Chunk, ChunkedGenome};
-use itertools::{izip, Itertools};
+use itertools::{Itertools, izip};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rust_htslib::bam::ext::BamRecordExtensions as RustHtsLibBamExtensions;
 use rust_htslib::bam::{self, Read as ReadTrait};
@@ -395,11 +395,7 @@ impl CounterPerChunk {
                                     entry.0 = entry.0.saturating_add(1)
                                 }
                             }
-                            if reverse {
-                                "reverse"
-                            } else {
-                                "forward"
-                            }
+                            if reverse { "reverse" } else { "forward" }
                         }
                         AnnotatedRead::Filtered => "filtered",
                         AnnotatedRead::NotInRegion => {
@@ -887,17 +883,17 @@ impl Output {
                             .parse()
                             .context("Failed to parse value")?;
 
-                        if let Some(&barcode_index) = barcode_to_index.get(&barcode) {
-                            matrix_out.write_all(
-                                format!(
-                                    "{} {} {}\n",
-                                    feature_idx, // we already added +1
-                                    barcode_index,
-                                    value
-                                )
-                                .as_bytes(),
-                            )?;
-                        }
+                        let barcode_index =
+                            barcode_to_index.get(&barcode).expect("Barcode not found!?");
+                        matrix_out.write_all(
+                            format!(
+                                "{} {} {}\n",
+                                feature_idx, // we already added +1
+                                barcode_index,
+                                value
+                            )
+                            .as_bytes(),
+                        )?;
                     }
                 }
 
@@ -1148,7 +1144,9 @@ impl Engine {
                         for (chr, id1, id2) in overlap {
                             eprintln!("{}: {} and {}", chr, id1, id2);
                         }
-                        bail!("In PerRegion quantification, if multi_region is not 'drop', regions may not overlap. Fix your input GTF/GFF.");
+                        bail!(
+                            "In PerRegion quantification, if multi_region is not 'drop', regions may not overlap. Fix your input GTF/GFF."
+                        );
                     }
                 }
             }
@@ -1272,7 +1270,9 @@ impl Engine {
         let chunks = {
             let mut chunks = self.matcher.generate_chunks(bam)?;
             if chunks.is_empty() {
-                bail!("No chunks generated. This might be because the BAM file is empty (at least on the references requested) or the matcher did not find any regions to quantify.");
+                bail!(
+                    "No chunks generated. This might be because the BAM file is empty (at least on the references requested) or the matcher did not find any regions to quantify."
+                );
             }
             //filter chunks if reference filter is in use.
             for f in self.filters.iter() {
@@ -1563,10 +1563,10 @@ impl Engine {
                     .try_into()
                     .expect("sam read position for aligned reads should always be <=2^31-1"),
             ); //we read based on stored read position. Once that's
-               //reached x+max_skip len the outer frame can process those up to x...
+            //reached x+max_skip len the outer frame can process those up to x...
 
             let mut region_hit = None; //doing it per read, (with optional caching in the
-                                       // matcher?) allows us fancier matchers later on
+            // matcher?) allows us fancier matchers later on
             let position_for_bounds_check = read.pos() as i32;
             let corrected_position_from_read = if max_skip_len > 0 {
                 let rp = read
@@ -1586,7 +1586,7 @@ impl Engine {
                     // since here chunk = reference len, we simply place them to the right
                     // of all possible positions,
                     (chunk.stop + max_skip_len) as i32 // a position beyond the end of the
-                                                       // chunk. Which means we collect all reads on this reference.
+                    // chunk. Which means we collect all reads on this reference.
                 }
                 Bucket::PerRegion => {
                     // we have a handy low-digit id for each region in a chunk thanks
@@ -1624,7 +1624,9 @@ impl Engine {
                                 .expect("Genes in region, plus chunk size exceeding i32")
                         }*/
                         _ => {
-                            panic!("When quantifying per-region, regions must not overlap. Also this should have been caught earlier during region setup (for multi_region = 'count_both), or the read should not have had regions (for multi_region='drop').");
+                            panic!(
+                                "When quantifying per-region, regions must not overlap. Also this should have been caught earlier during region setup (for multi_region = 'count_both), or the read should not have had regions (for multi_region='drop')."
+                            );
                             // we're checking this before hand see any_overlapping_features
                             // the other option would be to silently not count them (bad)
                             // or somehow multiply them for both buckets (too much implementation)

@@ -44,6 +44,18 @@ where
 type Whitelist = hamming_resonate::HammingResonatorWeighted;
 
 #[derive(serde::Deserialize, Debug)]
+enum AllowListMode 
+    {
+        /// check each read against the allow list and correct if possible
+        PerRead,
+        /// First, count everything. Then correct 'virtual cells'
+        /// to the closest barcode (within max_hamming distance), breaking ties towards
+        /// barcodes with more counts.
+        PerBarcode
+
+    }
+
+#[derive(serde::Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CellBarcodes {
     extract: extractors::Extractor,
@@ -53,7 +65,7 @@ pub struct CellBarcodes {
     max_hamming: u16,
     #[serde(default)]
     allowlist_files: Vec<PathBuf>,
-    //allowlist_mode: AllowListMode,
+    allowlist_mode: AllowListMode,
     #[serde(skip)]
     allowlists: Vec<Whitelist>,
 }
@@ -97,6 +109,9 @@ impl CellBarcodes {
         use bstr::ByteSlice;
         if barcode.is_empty() {
             return None;
+        }
+        if !matches!(self.allowlist_mode, AllowListMode::PerRead) {
+            return Some(barcode.to_vec());
         }
         // possibly microopt: use cow...
         if self.allowlists.is_empty() {
