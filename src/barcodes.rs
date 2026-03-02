@@ -1,4 +1,6 @@
 use anyhow::{Context, Result, bail};
+use bstr::{BStr, BString};
+use hamming_resonate::HammingResonatorWeighted;
 use std::{collections::HashSet, path::PathBuf};
 
 use crate::extractors::{self, Extractors};
@@ -39,9 +41,9 @@ where
     deserializer.deserialize_any(Visitor)
 }
 
-type Whitelist = (HashSet<Vec<u8>>, Vec<Vec<u8>>);
+type Whitelist = hamming_resonate::HammingResonatorWeighted;
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(serde::Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CellBarcodes {
     extract: extractors::Extractor,
@@ -51,31 +53,32 @@ pub struct CellBarcodes {
     max_hamming: u16,
     #[serde(default)]
     allowlist_files: Vec<PathBuf>,
-
+    //allowlist_mode: AllowListMode,
     #[serde(skip)]
     allowlists: Vec<Whitelist>,
 }
 
 impl CellBarcodes {
     pub fn init(&mut self) -> Result<()> {
-        let wl: Result<_> = self
+        let wl: Result<Vec<HammingResonatorWeighted>> = self
             .allowlist_files
             .iter()
             .map(|file| {
                 let res = std::fs::read_to_string(file)
                     .with_context(|| format!("Failed to read allowlist file: {:?}", file))?
                     .lines()
-                    .map(|line| line.trim().as_bytes().to_vec())
+                    .map(|line| (BString::from(line.trim().as_bytes()), 0.0f32))
                     .collect::<Vec<_>>();
-                let lengths_observed: HashSet<usize> = res.iter().map(|x| x.len()).collect();
+                let lengths_observed: HashSet<usize> = res.iter().map(|x| x.0.len()).collect();
                 if lengths_observed.len() >1 {
                     bail!("More than one length in allow list file. Barcodes must be of uniform length. Observed: {:?}", lengths_observed);
                 }
-                Ok((
-                    res.iter().map(|x| x.clone()).collect(),
-                    res)
-                )
-
+                let deduped: HashSet<_> = res.iter().map(|x| &x.0).collect();
+                if deduped.len() != res.len() {
+                    bail!("Duplicate entries in allow list file: {:?}", file);
+                }
+                Ok(HammingResonatorWeighted::with_max_dist(res, self.max_hamming as u32)
+                    .with_context(|| format!("Failed to create HammingResonator for file: {:?}", file))?)
             })
             .collect();
         self.allowlists = wl?;
@@ -91,49 +94,30 @@ impl CellBarcodes {
     }
 
     pub fn correct(&self, barcode: &[u8]) -> Option<Vec<u8>> {
+        use bstr::ByteSlice;
+        if barcode.is_empty() {
+            return None;
+        }
         // possibly microopt: use cow...
         if self.allowlists.is_empty() {
-            if barcode.is_empty() {
-                return None;
-            } else {
-                return Some(barcode.to_vec());
-            }
+            return Some(barcode.to_vec());
         }
         let parts = barcode.split(|&b| b == self.separator_char);
         let mut out = Vec::new();
         for (part, allowlist) in parts.zip(self.allowlists.iter()) {
-            if allowlist.0.contains(part) {
-                if !out.is_empty() {
-                    out.push(self.separator_char);
-                }
-                out.extend(part);
-            } else {
-                match self.find_closest_by_hamming(part, &allowlist.1) {
-                    Some(corrected) => {
-                        if !out.is_empty() {
-                            out.push(self.separator_char);
-                        }
-                        out.extend(corrected);
+            let best = allowlist
+                .query_best(BStr::new(part))
+                .ok()?; // length mismatch -> no match
+            match best {
+                Some(best) => {
+                    if !out.is_empty() {
+                        out.push(self.separator_char);
                     }
-                    None => return None,
+                    out.extend(best.as_bytes());
                 }
+                None => return None,
             }
         }
         Some(out)
-    }
-
-    fn find_closest_by_hamming<'a>(
-        &self,
-        part: &[u8],
-        allowlist: &'a Vec<Vec<u8>>,
-    ) -> Option<&'a [u8]> {
-        use bio::alignment::distance::hamming;
-        if self.max_hamming == 0 {
-            return None; // No correction allowed
-        }
-        allowlist
-            .iter()
-            .find(|&entry| hamming(entry, part) <= self.max_hamming as u64)
-            .map(|v| v.as_slice())
     }
 }

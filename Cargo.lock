@@ -228,6 +228,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstring"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fedb55f6ff5648d0371c85f1cee91d6dc87b2917f6c9e7988d0dbf4d72c182b6"
+dependencies = [
+ "ref_slice",
+]
+
+[[package]]
 name = "bv"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -638,6 +647,17 @@ name = "glob"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
+
+[[package]]
+name = "hamming-resonate"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fc5f8de861b5ded4f112528de507c66cfdb641a19d01d550a74bcc0f9f9c530"
+dependencies = [
+ "bstr",
+ "rayon",
+ "thiserror 2.0.12",
+]
 
 [[package]]
 name = "hashbrown"
@@ -1092,11 +1112,13 @@ dependencies = [
  "anyhow",
  "bio",
  "bstr",
+ "bstring",
  "csv",
  "enum_dispatch",
  "env_logger",
  "ex",
  "flate2",
+ "hamming-resonate",
  "human-panic",
  "itertools 0.14.0",
  "linereader",
@@ -1710,6 +1732,12 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
 ]
+
+[[package]]
+name = "ref_slice"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4ed1d73fb92eba9b841ba2aef69533a060ccc0d3ec71c90aeda5996d4afb7a9"
 
 [[package]]
 name = "regex"

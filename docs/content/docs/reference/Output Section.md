@@ -79,6 +79,7 @@ some of the tags may not be set.
 - 4 - the read's cell barcode  was not in the whitelist
 - 5 - the read had no barcode
 - 6 - the read had no UMI
+- 7 - the read was an approximate UMI duplicate
 - counted reads do not get an XF tag.
 
 ### XQ - correct hits

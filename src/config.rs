@@ -15,7 +15,7 @@ use crate::{
     filters::ReadFilter,
 };
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub input: Input,
