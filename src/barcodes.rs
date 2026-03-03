@@ -230,7 +230,7 @@ impl CellBarcodes {
         //this is still pre-combinatorial.
         let allowed_barcodes: Vec<Vec<BString>> =
             self.allowlists.iter().map(|x| x.to_seqs()).collect();
-        let allowed_barcodes_scored: Vec<(BString, f32)> = allowed_barcodes
+        let mut allowed_barcodes_scored: Vec<(BString, f32)> = allowed_barcodes
             .iter()
             .multi_cartesian_product()
             .map(|parts| {
@@ -250,11 +250,46 @@ impl CellBarcodes {
                 (barcode, score)
             })
             .collect();
+        allowed_barcodes_scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap()); //sort
+        //alphabetically
         let hamming_db =
             HammingResonatorWeighted::new(allowed_barcodes_scored, self.max_hamming as u32)
                 .context("Failed to build HammingResonator for corrected barcodes")?;
 
         Ok((barcodes, hamming_db, matrix_coo))
+    }
+
+    fn write_corrected_matrix(
+        new_coo: nalgebra_sparse::CooMatrix<i64>,
+        hamming_db: &HammingResonatorWeighted,
+        barcode_filename: &PathBuf,
+        matrix_filename: &PathBuf,
+    ) -> Result<()> {
+        // Converting to CSC automatically sums duplicate (row, col) entries.
+        let csc = nalgebra_sparse::CscMatrix::from(&new_coo);
+
+        // Write the corrected matrix in MatrixMarket format.
+        {
+            nalgebra_sparse::io::save_to_matrix_market_file(&csc, matrix_filename)?;
+        }
+
+        // Write the complete barcode file.
+        {
+            use std::io::Write;
+            let mut bw = std::io::BufWriter::new(
+                std::fs::File::create(barcode_filename).with_context(|| {
+                    format!(
+                        "Failed to create corrected barcodes: {:?}",
+                        barcode_filename
+                    )
+                })?,
+            );
+            for bc in hamming_db.to_seqs() {
+                bw.write_all(bc.as_slice())?;
+                bw.write_all(b"\n")?;
+            }
+        }
+        Ok(())
     }
 
     pub fn correct_mtx_per_barcode(
@@ -308,31 +343,7 @@ impl CellBarcodes {
                 new_coo.push(row, new_col, val);
             }
         }
-
-        // Converting to CSC automatically sums duplicate (row, col) entries.
-        let csc = nalgebra_sparse::CscMatrix::from(&new_coo);
-
-        // Write the corrected matrix in MatrixMarket format.
-        {
-            nalgebra_sparse::io::save_to_matrix_market_file(&csc, matrix_filename)?;
-        }
-
-        // Write the complete barcode file.
-        {
-            use std::io::Write;
-            let mut bw = std::io::BufWriter::new(
-                std::fs::File::create(barcode_filename).with_context(|| {
-                    format!(
-                        "Failed to create corrected barcodes: {:?}",
-                        barcode_filename
-                    )
-                })?,
-            );
-            for bc in hamming_db.to_seqs() {
-                bw.write_all(bc.as_slice())?;
-                bw.write_all(b"\n")?;
-            }
-        }
+        Self::write_corrected_matrix(new_coo, &hamming_db, barcode_filename, matrix_filename)?;
 
         Ok(())
     }
@@ -367,46 +378,86 @@ mod tests {
             let bc = barcodes[j].clone();
             let key = (bc, i);
             match result.entry(key) {
-                std::collections::hash_map::Entry::Occupied(_occupied_entry) => panic!(),
-                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(*v);
+                std::collections::hash_map::Entry::Occupied(_) => panic!("duplicate MTX entry"),
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(*v);
                 }
             }
         }
         for gene_idx in 0..matrix_coo.nrows() {
             for bc in &barcodes {
-                let key = (bc.clone(), gene_idx);
-                result.entry(key).or_insert(0);
+                result.entry((bc.clone(), gene_idx)).or_insert(0);
             }
         }
         result
     }
 
-    #[test]
-    fn test_correct_mtx_per_barcode_folds_noisy_barcodes() {
+    /// Run PerBarcode correction in a fresh temp directory.
+    ///
+    /// Returns `(dir, sorted_barcodes, counts_map)`. The caller must hold `dir`
+    /// for as long as file-system checks are needed; it is cleaned up on drop.
+    fn run_per_barcode_correction(
+        allowlist_content: &str,
+        features_content: &str,
+        barcodes_content: &str,
+        matrix_content: &str,
+        max_hamming: u16,
+    ) -> (
+        tempfile::TempDir,
+        Vec<String>,
+        HashMap<(String, usize), i64>,
+    ) {
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path();
 
-        // Allowlist: two valid 4-mers.
         let allowlist = p.join("allowlist.txt");
-        write_file(&allowlist, "TTTT\nAAAA\nCCCC\n");
-
-        // features.tsv: two genes (row 1 = geneA, row 2 = geneB in MTX 1-based indexing).
         let features = p.join("features.tsv");
-        write_file(&features, "geneA\ngeneB\n");
-
-        // barcodes.tsv: two valid barcodes and one noisy variant each.
-        //   col 1 = AAAA (valid),  total counts = 6+4 = 10
-        //   col 2 = AAAT (noisy),  total counts = 2+1 =  3  → should fold into AAAA
-        //   col 3 = CCCC (valid),  total counts = 15+5 = 20
-        //   col 4 = CCCG (noisy),  total counts = 3   =  3  → should fold into CCCC
         let barcodes_file = p.join("barcodes.tsv");
-        write_file(&barcodes_file, "AAAA\nAAAT\nCCCC\nCCCG\nGGGG\n");
-
-        // matrix.mtx: 2 features × 4 barcodes, 7 non-zero entries.
         let matrix_file = p.join("matrix.mtx");
-        write_file(
-            &matrix_file,
+
+        write_file(&allowlist, allowlist_content);
+        write_file(&features, features_content);
+        write_file(&barcodes_file, barcodes_content);
+        write_file(&matrix_file, matrix_content);
+
+        let mut cb = CellBarcodes {
+            extract: crate::extractors::Extractor::Tag(crate::extractors::Tag {
+                tag: [b'C', b'B'],
+            }),
+            separator_char: b'|',
+            max_hamming,
+            allowlist_files: vec![allowlist],
+            allowlist_mode: AllowListMode::PerBarcode,
+            allowlists: Vec::new(),
+        };
+        cb.init().unwrap();
+        cb.correct_mtx_per_barcode(&features, &barcodes_file, &matrix_file)
+            .unwrap();
+
+        let counts = parse_corrected(&matrix_file, &barcodes_file);
+        let mut barcodes = read_lines(&barcodes_file);
+        //barcodes.sort();
+        (dir, barcodes, counts)
+    }
+
+    // ── basic ──────────────────────────────────────────────────────────────────
+
+    /// Two valid 4-mers (AAAA, CCCC) plus one unused allowlist entry (TTTT).
+    /// One noisy variant of each valid barcode is present in the observed data;
+    /// a completely off-target barcode (GGGG, hamming 4 from everything) is dropped.
+    ///
+    /// Barcodes and expected fold-in:
+    ///   AAAA (valid)   total counts 6+4 = 10
+    ///   AAAT (noisy)   total counts 2+1 =  3  → folds into AAAA
+    ///   CCCC (valid)   total counts 15+5 = 20
+    ///   CCCG (noisy)   total counts 3        → folds into CCCC
+    ///   GGGG (off-target, hamming ≥4)        → dropped
+    #[test]
+    fn test_correct_mtx_per_barcode_basic() {
+        let (dir, barcodes, counts) = run_per_barcode_correction(
+            "TTTT\nAAAA\nCCCC\n",
+            "geneA\ngeneB\n",
+            "AAAA\nAAAT\nCCCC\nCCCG\nGGGG\n",
             "%%MatrixMarket matrix coordinate integer general\n\
              %\n\
              2 5 9\n\
@@ -419,25 +470,11 @@ mod tests {
              1 4 3\n\
              1 5 30\n\
              2 5 3\n",
+            1,
         );
 
-        let mut cb = CellBarcodes {
-            extract: crate::extractors::Extractor::Tag(crate::extractors::Tag {
-                tag: [b'C', b'B'],
-            }),
-            separator_char: b'|',
-            max_hamming: 1,
-            allowlist_files: vec![allowlist],
-            allowlist_mode: AllowListMode::PerBarcode,
-            allowlists: Vec::new(),
-        };
-        cb.init().unwrap();
-
-        cb.correct_mtx_per_barcode(&features, &barcodes_file, &matrix_file)
-            .unwrap();
-
         // raw/ must exist and contain all three original files.
-        let raw = p.join("raw");
+        let raw = dir.path().join("raw");
         assert!(
             raw.join("features.tsv").exists(),
             "raw/features.tsv missing"
@@ -450,7 +487,8 @@ mod tests {
 
         // features.tsv must be a symlink pointing into raw/.
         assert!(
-            features
+            dir.path()
+                .join("features.tsv")
                 .symlink_metadata()
                 .unwrap()
                 .file_type()
@@ -458,27 +496,130 @@ mod tests {
             "features.tsv should be a symlink"
         );
 
-        // Corrected barcodes file must contain exactly the two valid ones.
-        let out_barcodes = read_lines(&barcodes_file);
-        assert_eq!(out_barcodes.len(), 3); //includes T
-        assert!(out_barcodes.contains(&"AAAA".to_string()));
-        assert!(out_barcodes.contains(&"CCCC".to_string()));
-        assert!(out_barcodes.contains(&"TTTT".to_string()));
+        // Output must contain exactly the three allowlist entries.
+        assert_eq!(barcodes, vec!["AAAA", "CCCC", "TTTT"]);
 
-        // Corrected matrix counts:
-        //   AAAA: geneA = 6+2 = 8,  geneB = 4+1 = 5
-        //   CCCC: geneA = 15+3 = 18, geneB = 5
-        //we have rewritten the matrix file.
-        let bc = std::fs::read_to_string(&barcodes_file).unwrap();
-        dbg!(bc);
-        let counts = parse_corrected(&matrix_file, &barcodes_file);
-        dbg!(&counts);
-        assert_eq!(counts[&("AAAA".into(), 0)], 2 + 6, "AAAA geneA");
-        assert_eq!(counts[&("AAAA".into(), 1)], 5, "AAAA geneB");
-        assert_eq!(counts[&("CCCC".into(), 0)], 18, "CCCC geneA");
+        // Folded counts.
+        assert_eq!(counts[&("AAAA".into(), 0)], 8, "AAAA geneA = 6+2");
+        assert_eq!(counts[&("AAAA".into(), 1)], 5, "AAAA geneB = 4+1");
+        assert_eq!(counts[&("CCCC".into(), 0)], 18, "CCCC geneA = 15+3");
         assert_eq!(counts[&("CCCC".into(), 1)], 5, "CCCC geneB");
-
         assert_eq!(counts[&("TTTT".into(), 0)], 0, "TTTT geneA");
         assert_eq!(counts[&("TTTT".into(), 1)], 0, "TTTT geneB");
+    }
+
+    // ── allowlist order invariance ─────────────────────────────────────────────
+
+    /// The order of entries inside the allowlist file must not affect which
+    /// barcode a noisy read is corrected to, nor the final counts.
+    /// (No ties exist in this dataset, so tie-breaking index is irrelevant.)
+    #[test]
+    fn test_correct_mtx_per_barcode_allowlist_order_invariant() {
+        let matrix = "%%MatrixMarket matrix coordinate integer general\n\
+                      %\n\
+                      2 5 9\n\
+                      1 1 6\n\
+                      2 1 4\n\
+                      1 2 2\n\
+                      2 2 1\n\
+                      1 3 15\n\
+                      2 3 5\n\
+                      1 4 3\n\
+                      1 5 30\n\
+                      2 5 3\n";
+        let barcodes_in = "AAAA\nAAAT\nCCCC\nCCCG\nGGGG\n";
+        let features = "geneA\ngeneB\n";
+
+        let run = |allowlist: &str| {
+            let (_dir, barcodes, counts) =
+                run_per_barcode_correction(allowlist, features, barcodes_in, matrix, 1);
+            (barcodes, counts)
+        };
+
+        let (b1, c1) = run("TTTT\nAAAA\nCCCC\n");
+        let (b2, c2) = run("CCCC\nTTTT\nAAAA\n");
+        let (b3, c3) = run("AAAA\nCCCC\nTTTT\n");
+
+        assert_eq!(b1, b2, "barcodes differ for order 2");
+        assert_eq!(b1, b3, "barcodes differ for order 3");
+        assert_eq!(c1, c2, "counts differ for order 2");
+        assert_eq!(c1, c3, "counts differ for order 3");
+    }
+
+    // ── larger hamming distance ────────────────────────────────────────────────
+
+    /// With max_hamming=2:
+    ///   AATT (hamming 2 from AAAA, 4 from CCCC) → folds into AAAA
+    ///   GCGT (hamming 3 from CCCC, 4 from AAAA) → outside budget, dropped
+    #[test]
+    fn test_correct_mtx_per_barcode_hamming2() {
+        let (_, barcodes, counts) = run_per_barcode_correction(
+            "AAAA\nCCCC\n",
+            "geneA\n",
+            "AAAA\nAATT\nCCCC\nGCGT\n",
+            "%%MatrixMarket matrix coordinate integer general\n\
+             %\n\
+             1 4 4\n\
+             1 1 10\n\
+             1 2 3\n\
+             1 3 20\n\
+             1 4 5\n",
+            2,
+        );
+
+        assert_eq!(barcodes, vec!["AAAA", "CCCC"]);
+        // AATT (hamming 2) folds into AAAA.
+        assert_eq!(counts[&("AAAA".into(), 0)], 13, "AAAA geneA = 10+3");
+        // GCGT (hamming 3) is dropped entirely.
+        assert_eq!(counts[&("CCCC".into(), 0)], 20, "CCCC geneA");
+    }
+
+    // ── count-based tie-breaking ───────────────────────────────────────────────
+
+    /// When a noisy barcode is equidistant (hamming 1) from two valid barcodes,
+    /// it must fold into the one whose observed column has the higher total count.
+    ///
+    ///   AACC  (valid, col 1): geneA = 100
+    ///   TTCC  (valid, col 2): geneA =  10
+    ///   ATCC  (noisy): hamming 1 from AACC *and* TTCC → must fold into AACC (higher count)
+    #[test]
+    fn test_correct_mtx_per_barcode_count_preference() {
+        let (_, barcodes, counts) = run_per_barcode_correction(
+            "AACC\nTTCC\n",
+            "geneA\n",
+            "AACC\nTTCC\nATCC\n",
+            "%%MatrixMarket matrix coordinate integer general\n\
+             %\n\
+             1 3 3\n\
+             1 1 100\n\
+             1 2 10\n\
+             1 3 5\n",
+            1,
+        );
+
+        assert_eq!(barcodes, vec!["AACC", "TTCC"]);
+        // ATCC folds into AACC (higher count wins the tie).
+        assert_eq!(counts[&("AACC".into(), 0)], 105, "AACC geneA = 100+5");
+        assert_eq!(counts[&("TTCC".into(), 0)], 10, "TTCC geneA");
+    }
+    #[test]
+    fn test_correct_mtx_per_barcode_count_preference_swap() {
+        let (_, barcodes, counts) = run_per_barcode_correction(
+            "TTCC\nAACC\n",
+            "geneA\n",
+            "AACC\nTTCC\nATCC\n",
+            "%%MatrixMarket matrix coordinate integer general\n\
+             %\n\
+             1 3 3\n\
+             1 1 100\n\
+             1 2 10\n\
+             1 3 5\n",
+            1,
+        );
+
+        assert_eq!(barcodes, vec!["AACC", "TTCC"]);
+        // ATCC folds into AACC (higher count wins the tie).
+        assert_eq!(counts[&("AACC".into(), 0)], 105, "AACC geneA = 100+5");
+        assert_eq!(counts[&("TTCC".into(), 0)], 10, "TTCC geneA");
     }
 }
