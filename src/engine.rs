@@ -807,12 +807,15 @@ impl Output {
                     temp.sort();
                     temp
                 };
-                let mut feature_file =
-                    BufWriter::new(ex::fs::File::create(&features_filename)?.into_inner());
-                for (_, feature) in sorted_features {
-                    feature_file
-                        .write_all(format!("{}\n", feature).as_bytes())
-                        .context("Failed to write features to file")?;
+                {
+                    let mut feature_file =
+                        BufWriter::new(ex::fs::File::create(&features_filename)?.into_inner());
+                    for (_, feature) in sorted_features {
+                        feature_file
+                            .write_all(format!("{}\n", feature).as_bytes())
+                            .context("Failed to write features to file")?;
+                    }
+                    drop(feature_file);
                 }
 
                 let barcodes_filename = output_prefix.join("barcodes.tsv");
@@ -828,12 +831,17 @@ impl Output {
 
                     (temp, lookup)
                 };
-                let mut barcode_file =
-                    BufWriter::new(ex::fs::File::create(&barcodes_filename)?.into_inner());
-                for barcode in barcodes {
-                    barcode_file
-                        .write_all(format!("{}\n", String::from_utf8_lossy(&barcode)).as_bytes())
-                        .context("Failed to write barcodes to file")?;
+                {
+                    let mut barcode_file =
+                        BufWriter::new(ex::fs::File::create(&barcodes_filename)?.into_inner());
+                    for barcode in barcodes {
+                        barcode_file
+                            .write_all(
+                                format!("{}\n", String::from_utf8_lossy(&barcode)).as_bytes(),
+                            )
+                            .context("Failed to write barcodes to file")?;
+                    }
+                    drop(barcode_file);
                 }
                 //matrix file has a header with nrow, ncols, nentries, so we need to push it into a
                 //new file.
@@ -908,7 +916,7 @@ impl Output {
                     );
                 }
 
-                Self::write_stats(&matrix_filename, &stat_counter)
+                let matrix_stats_filename = Self::write_stats(&matrix_filename, &stat_counter)
                     .context("Failed to write stats file")?;
                 if let Some(cell_barcodes) = cell_barcodes
                     && matches!(
@@ -920,6 +928,7 @@ impl Output {
                         &features_filename,
                         &barcodes_filename,
                         &matrix_filename,
+                        &matrix_stats_filename,
                     )?;
                 }
             }
@@ -975,7 +984,10 @@ impl Output {
         Ok(())
     }
 
-    fn write_stats(output_filename: &Path, stat_counter: &HashMap<String, usize>) -> Result<()> {
+    fn write_stats(
+        output_filename: &Path,
+        stat_counter: &HashMap<String, usize>,
+    ) -> Result<PathBuf> {
         let stat_filename = output_filename.with_file_name(format!(
             "{}.stats.tsv",
             output_filename.file_name().unwrap().to_string_lossy()
@@ -991,7 +1003,7 @@ impl Output {
                 .write_all(format!("{}\t{}\n", key, stat_counter.get(key).unwrap()).as_bytes())
                 .context("Failed to write stats to file")?;
         }
-        Ok(())
+        Ok(stat_filename)
     }
 }
 

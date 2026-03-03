@@ -147,6 +147,7 @@ impl CellBarcodes {
         feature_filename: &PathBuf,
         barcode_filename: &PathBuf,
         matrix_filename: &PathBuf,
+        matrix_stats_filename: &PathBuf,
     ) -> Result<(PathBuf, PathBuf)> {
         let raw_dir = matrix_filename
             .parent()
@@ -177,6 +178,14 @@ impl CellBarcodes {
             )
         })?;
 
+        let raw_matrix_stats_filename = raw_dir.join(matrix_stats_filename.file_name().unwrap());
+        std::fs::rename(matrix_stats_filename, &raw_matrix_stats_filename).with_context(|| {
+            format!(
+                "Failed to move matrix stats file to raw directory: {:?} -> {:?}",
+                matrix_stats_filename, raw_matrix_stats_filename
+            )
+        })?;
+
         //now the features stay the same.
         //so just symlink the file
         std::os::unix::fs::symlink(&raw_feature_filename, feature_filename).with_context(|| {
@@ -198,7 +207,7 @@ impl CellBarcodes {
         nalgebra_sparse::CooMatrix<i64>,
     )> {
         use itertools::Itertools;
-        //read the barcodes, get us a hammng resonator with
+        //read the barcodes, get us a hamming resonator with
         //scores =  counts
         let barcodes: Vec<BString> = {
             //read all the lines
@@ -217,6 +226,11 @@ impl CellBarcodes {
             .collect();
         let matrix_coo =
             nalgebra_sparse::io::load_coo_from_matrix_market_file(&raw_matrix_filename)?;
+        assert_eq!(
+            barcodes.len(),
+            matrix_coo.ncols(),
+            "Number of barcodes must match number of columns in matrix"
+        );
         // Column sums: total counts per barcode column.
         let mut barcode_sums = vec![0i64; barcodes.len()];
         for (&col, &val) in matrix_coo
@@ -297,11 +311,16 @@ impl CellBarcodes {
         feature_filename: &PathBuf,
         barcode_filename: &PathBuf,
         matrix_filename: &PathBuf,
+        matrix_stats_filename: &PathBuf,
     ) -> Result<()> {
         assert!(matches!(self.allowlist_mode, AllowListMode::PerBarcode));
         assert!(!self.allowlist_files.is_empty());
-        let (raw_barcode_filename, raw_matrix_filename) =
-            self.rename_raw_files(feature_filename, barcode_filename, matrix_filename)?;
+        let (raw_barcode_filename, raw_matrix_filename) = self.rename_raw_files(
+            feature_filename,
+            barcode_filename,
+            matrix_filename,
+            matrix_stats_filename,
+        )?;
 
         let (observed_barcodes_in_matrix_order, hamming_db, matrix_coo) =
             self.read_matrix_and_quantify_barcodes(raw_barcode_filename, raw_matrix_filename)?;
@@ -325,8 +344,6 @@ impl CellBarcodes {
                 col_remap.push(None);
             }
         }
-        dbg!(&observed_barcodes_in_matrix_order);
-        dbg!(&col_remap);
 
         // Build a new COO matrix with remapped columns (duplicates arise when multiple
         // raw barcodes fold into the same target).
@@ -414,11 +431,13 @@ mod tests {
         let features = p.join("features.tsv");
         let barcodes_file = p.join("barcodes.tsv");
         let matrix_file = p.join("matrix.mtx");
+        let matrix_stats_file = p.join("matrix.mtx.stats.tsv");
 
         write_file(&allowlist, allowlist_content);
         write_file(&features, features_content);
         write_file(&barcodes_file, barcodes_content);
         write_file(&matrix_file, matrix_content);
+        write_file(&matrix_stats_file, "left blank"); // content not relevant for this test
 
         let mut cb = CellBarcodes {
             extract: crate::extractors::Extractor::Tag(crate::extractors::Tag {
@@ -431,12 +450,11 @@ mod tests {
             allowlists: Vec::new(),
         };
         cb.init().unwrap();
-        cb.correct_mtx_per_barcode(&features, &barcodes_file, &matrix_file)
+        cb.correct_mtx_per_barcode(&features, &barcodes_file, &matrix_file, &matrix_stats_file)
             .unwrap();
 
         let counts = parse_corrected(&matrix_file, &barcodes_file);
         let mut barcodes = read_lines(&barcodes_file);
-        //barcodes.sort();
         (dir, barcodes, counts)
     }
 
@@ -484,6 +502,10 @@ mod tests {
             "raw/barcodes.tsv missing"
         );
         assert!(raw.join("matrix.mtx").exists(), "raw/matrix.mtx missing");
+        assert!(
+            raw.join("matrix.mtx.stats.tsv").exists(),
+            "raw/matrix.mtx.stats.tsv missing"
+        );
 
         // features.tsv must be a symlink pointing into raw/.
         assert!(
