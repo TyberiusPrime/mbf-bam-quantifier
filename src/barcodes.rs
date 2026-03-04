@@ -289,6 +289,13 @@ impl CellBarcodes {
         // Write the corrected matrix in MatrixMarket format.
         {
             nalgebra_sparse::io::save_to_matrix_market_file(&csc, matrix_filename)?;
+            // nalgebra writes "%%matrixmarket" but the canonical casing is "%%MatrixMarket".
+            // Same byte length, so fix it in-place without touching the rest of the file.
+            use std::io::{Seek, SeekFrom, Write};
+            let mut f = std::fs::OpenOptions::new().write(true).open(matrix_filename)
+                .with_context(|| format!("Failed to open matrix file for header fix: {:?}", matrix_filename))?;
+            f.seek(SeekFrom::Start(2))?;
+            f.write_all(b"MatrixMarket")?;
         }
 
         // Write the complete barcode file.
@@ -514,6 +521,16 @@ mod tests {
         let counts = parse_corrected(&matrix_file, &barcodes_file);
         let barcodes = read_lines(&barcodes_file);
         let stats = parse_stats_file(&matrix_stats_file);
+
+        // Verify the MatrixMarket header has the canonical casing.
+        let first_line = std::fs::read_to_string(&matrix_file).unwrap();
+        let first_line = first_line.lines().next().unwrap();
+        assert!(
+            first_line.starts_with("%%MatrixMarket"),
+            "matrix header casing wrong: {:?}",
+            first_line
+        );
+
         (dir, barcodes, counts, stats)
     }
 
