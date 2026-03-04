@@ -106,6 +106,8 @@ impl CellBarcodes {
         self.extract.extract(read)
     }
 
+    /// Correct reads by hamming distance matched barcode,
+    /// correcting each read individually while it's being processed.
     pub fn correct(&self, barcode: &[u8]) -> Option<Vec<u8>> {
         use bstr::ByteSlice;
         if barcode.is_empty() {
@@ -205,6 +207,8 @@ impl CellBarcodes {
         Vec<BString>,
         HammingResonatorWeighted,
         nalgebra_sparse::CooMatrix<i64>,
+        Vec<i64>,
+
     )> {
         use itertools::Itertools;
         //read the barcodes, get us a hamming resonator with
@@ -270,7 +274,7 @@ impl CellBarcodes {
             HammingResonatorWeighted::new(allowed_barcodes_scored, self.max_hamming as u32)
                 .context("Failed to build HammingResonator for corrected barcodes")?;
 
-        Ok((barcodes, hamming_db, matrix_coo))
+        Ok((barcodes, hamming_db, matrix_coo, barcode_sums))
     }
 
     fn write_corrected_matrix(
@@ -306,6 +310,32 @@ impl CellBarcodes {
         Ok(())
     }
 
+    fn write_correction_stats(
+        matrix_stats_filename: &PathBuf,
+        total_perfect: i64,
+        total_corrected: i64,
+        total_uncorrectable: i64,
+    ) -> Result<()> {
+        use std::io::Write;
+        let mut bw = std::io::BufWriter::new(
+            std::fs::File::create(matrix_stats_filename).with_context(|| {
+                format!(
+                    "Failed to create matrix stats file: {:?}",
+                    matrix_stats_filename
+                )
+            })?,
+        );
+        writeln!(bw, "stat\tcount\n")?;
+        writeln!(bw, "total_perfect\t{}", total_perfect)?;
+        writeln!(bw, "total_corrected\t{}", total_corrected)?;
+        writeln!(bw, "total_uncorrectable\t{}", total_uncorrectable)?;
+        Ok(())
+    }
+
+    /// Correct barcodes after counting everything.
+    /// We match them to the nearest by hamming distance,
+    /// and fold them onto the 'perfect' barcodes,
+    /// breaking ties by choosing the higher counted perfect barcode
     pub fn correct_mtx_per_barcode(
         &self,
         feature_filename: &PathBuf,
@@ -322,7 +352,7 @@ impl CellBarcodes {
             matrix_stats_filename,
         )?;
 
-        let (observed_barcodes_in_matrix_order, hamming_db, matrix_coo) =
+        let (observed_barcodes_in_matrix_order, hamming_db, matrix_coo, barcode_sums) =
             self.read_matrix_and_quantify_barcodes(raw_barcode_filename, raw_matrix_filename)?;
 
         let barcode_to_column: BTreeMap<BString, usize> = hamming_db
@@ -335,13 +365,22 @@ impl CellBarcodes {
         let mut col_remap: Vec<Option<usize>> = vec![];
         //we are going to make use of the fact that the CSC
         //constructor sums up triplets
-        for barcode in observed_barcodes_in_matrix_order.iter() {
-            if let Some((best_barcode, _hamming_dist, _count)) =
+        let mut total_perfect = 0;
+        let mut total_corrected = 0;
+        let mut total_uncorrectable = 0;
+        for (barcode_col, barcode) in observed_barcodes_in_matrix_order.iter().enumerate() {
+            if let Some((best_barcode, hamming_dist, _count)) =
                 hamming_db.query_best(barcode.as_bstr())?
             {
                 col_remap.push(Some(*barcode_to_column.get(best_barcode).unwrap()));
+                if hamming_dist == 0 {
+                    total_perfect += barcode_sums[barcode_col];
+                }else {
+                    total_corrected += barcode_sums[barcode_col];
+                }
             } else {
                 col_remap.push(None);
+                total_uncorrectable += barcode_sums[barcode_col];
             }
         }
 
@@ -361,6 +400,7 @@ impl CellBarcodes {
             }
         }
         Self::write_corrected_matrix(new_coo, &hamming_db, barcode_filename, matrix_filename)?;
+        Self::write_correction_stats(matrix_stats_filename, total_perfect, total_corrected, total_uncorrectable)?;
 
         Ok(())
     }
@@ -383,6 +423,23 @@ mod tests {
             .filter(|l| !l.is_empty())
             .map(|l| l.to_string())
             .collect()
+    }
+
+    fn parse_stats_file(path: &Path) -> HashMap<String, i64> {
+        let content = std::fs::read_to_string(path).unwrap();
+        let mut stats = HashMap::new();
+        for line in content.lines().skip(1) { // Skip header line
+            if line.trim().is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() == 2 {
+                let stat_name = parts[0].to_string();
+                let stat_value = parts[1].parse::<i64>().unwrap();
+                stats.insert(stat_name, stat_value);
+            }
+        }
+        stats
     }
 
     /// Parse a corrected MTX + barcodes file into a map of (barcode_name, row_0based) -> count.
@@ -411,7 +468,7 @@ mod tests {
 
     /// Run PerBarcode correction in a fresh temp directory.
     ///
-    /// Returns `(dir, sorted_barcodes, counts_map)`. The caller must hold `dir`
+    /// Returns `(dir, sorted_barcodes, counts_map, stats)`. The caller must hold `dir`
     /// for as long as file-system checks are needed; it is cleaned up on drop.
     fn run_per_barcode_correction(
         allowlist_content: &str,
@@ -423,6 +480,7 @@ mod tests {
         tempfile::TempDir,
         Vec<String>,
         HashMap<(String, usize), i64>,
+        HashMap<String, i64>,
     ) {
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path();
@@ -454,8 +512,9 @@ mod tests {
             .unwrap();
 
         let counts = parse_corrected(&matrix_file, &barcodes_file);
-        let mut barcodes = read_lines(&barcodes_file);
-        (dir, barcodes, counts)
+        let barcodes = read_lines(&barcodes_file);
+        let stats = parse_stats_file(&matrix_stats_file);
+        (dir, barcodes, counts, stats)
     }
 
     // ── basic ──────────────────────────────────────────────────────────────────
@@ -472,7 +531,7 @@ mod tests {
     ///   GGGG (off-target, hamming ≥4)        → dropped
     #[test]
     fn test_correct_mtx_per_barcode_basic() {
-        let (dir, barcodes, counts) = run_per_barcode_correction(
+        let (dir, barcodes, counts, stats) = run_per_barcode_correction(
             "TTTT\nAAAA\nCCCC\n",
             "geneA\ngeneB\n",
             "AAAA\nAAAT\nCCCC\nCCCG\nGGGG\n",
@@ -528,6 +587,14 @@ mod tests {
         assert_eq!(counts[&("CCCC".into(), 1)], 5, "CCCC geneB");
         assert_eq!(counts[&("TTTT".into(), 0)], 0, "TTTT geneA");
         assert_eq!(counts[&("TTTT".into(), 1)], 0, "TTTT geneB");
+
+        // Verify correction stats.
+        // AAAA: perfect (10 total), CCCC: perfect (20 total) = 30 perfect
+        // AAAT: corrected to AAAA (3 total), CCCG: corrected to CCCC (3 total) = 6 corrected  
+        // GGGG: uncorrectable (33 total) = 33 uncorrectable
+        assert_eq!(stats[&"total_perfect".to_string()], 30, "total_perfect");
+        assert_eq!(stats[&"total_corrected".to_string()], 6, "total_corrected");
+        assert_eq!(stats[&"total_uncorrectable".to_string()], 33, "total_uncorrectable");
     }
 
     // ── allowlist order invariance ─────────────────────────────────────────────
@@ -553,19 +620,21 @@ mod tests {
         let features = "geneA\ngeneB\n";
 
         let run = |allowlist: &str| {
-            let (_dir, barcodes, counts) =
+            let (_dir, barcodes, counts, stats) =
                 run_per_barcode_correction(allowlist, features, barcodes_in, matrix, 1);
-            (barcodes, counts)
+            (barcodes, counts, stats)
         };
 
-        let (b1, c1) = run("TTTT\nAAAA\nCCCC\n");
-        let (b2, c2) = run("CCCC\nTTTT\nAAAA\n");
-        let (b3, c3) = run("AAAA\nCCCC\nTTTT\n");
+        let (b1, c1, s1) = run("TTTT\nAAAA\nCCCC\n");
+        let (b2, c2, s2) = run("CCCC\nTTTT\nAAAA\n");
+        let (b3, c3, s3) = run("AAAA\nCCCC\nTTTT\n");
 
         assert_eq!(b1, b2, "barcodes differ for order 2");
         assert_eq!(b1, b3, "barcodes differ for order 3");
         assert_eq!(c1, c2, "counts differ for order 2");
         assert_eq!(c1, c3, "counts differ for order 3");
+        assert_eq!(s1, s2, "stats differ for order 2");
+        assert_eq!(s1, s3, "stats differ for order 3");
     }
 
     // ── larger hamming distance ────────────────────────────────────────────────
@@ -575,7 +644,7 @@ mod tests {
     ///   GCGT (hamming 3 from CCCC, 4 from AAAA) → outside budget, dropped
     #[test]
     fn test_correct_mtx_per_barcode_hamming2() {
-        let (_, barcodes, counts) = run_per_barcode_correction(
+        let (_, barcodes, counts, stats) = run_per_barcode_correction(
             "AAAA\nCCCC\n",
             "geneA\n",
             "AAAA\nAATT\nCCCC\nGCGT\n",
@@ -594,6 +663,14 @@ mod tests {
         assert_eq!(counts[&("AAAA".into(), 0)], 13, "AAAA geneA = 10+3");
         // GCGT (hamming 3) is dropped entirely.
         assert_eq!(counts[&("CCCC".into(), 0)], 20, "CCCC geneA");
+
+        // Verify correction stats.
+        // AAAA: perfect (10), CCCC: perfect (20) = 30 perfect
+        // AATT: corrected to AAAA (3) = 3 corrected
+        // GCGT: uncorrectable (9 total = 4+5) = 9 uncorrectable
+        assert_eq!(stats[&"total_perfect".to_string()], 30, "total_perfect");
+        assert_eq!(stats[&"total_corrected".to_string()], 3, "total_corrected");
+        assert_eq!(stats[&"total_uncorrectable".to_string()], 5, "total_uncorrectable");
     }
 
     // ── count-based tie-breaking ───────────────────────────────────────────────
@@ -606,7 +683,7 @@ mod tests {
     ///   ATCC  (noisy): hamming 1 from AACC *and* TTCC → must fold into AACC (higher count)
     #[test]
     fn test_correct_mtx_per_barcode_count_preference() {
-        let (_, barcodes, counts) = run_per_barcode_correction(
+        let (_, barcodes, counts, stats) = run_per_barcode_correction(
             "AACC\nTTCC\n",
             "geneA\n",
             "AACC\nTTCC\nATCC\n",
@@ -623,10 +700,18 @@ mod tests {
         // ATCC folds into AACC (higher count wins the tie).
         assert_eq!(counts[&("AACC".into(), 0)], 105, "AACC geneA = 100+5");
         assert_eq!(counts[&("TTCC".into(), 0)], 10, "TTCC geneA");
+
+        // Verify correction stats.
+        // AACC: perfect (100), TTCC: perfect (10) = 110 perfect
+        // ATCC: corrected to AACC (8 total = 3+5) = 8 corrected
+        // No uncorrectable barcodes = 0 uncorrectable
+        assert_eq!(stats[&"total_perfect".to_string()], 110, "total_perfect");
+        assert_eq!(stats[&"total_corrected".to_string()], 5, "total_corrected");
+        assert_eq!(stats[&"total_uncorrectable".to_string()], 0, "total_uncorrectable");
     }
     #[test]
     fn test_correct_mtx_per_barcode_count_preference_swap() {
-        let (_, barcodes, counts) = run_per_barcode_correction(
+        let (_, barcodes, counts, stats) = run_per_barcode_correction(
             "TTCC\nAACC\n",
             "geneA\n",
             "AACC\nTTCC\nATCC\n",
@@ -643,5 +728,13 @@ mod tests {
         // ATCC folds into AACC (higher count wins the tie).
         assert_eq!(counts[&("AACC".into(), 0)], 105, "AACC geneA = 100+5");
         assert_eq!(counts[&("TTCC".into(), 0)], 10, "TTCC geneA");
+
+        // Verify correction stats (same as previous test - allowlist order shouldn't matter).
+        // AACC: perfect (100), TTCC: perfect (10) = 110 perfect
+        // ATCC: corrected to AACC (8 total = 3+5) = 8 corrected
+        // No uncorrectable barcodes = 0 uncorrectable
+        assert_eq!(stats[&"total_perfect".to_string()], 110, "total_perfect");
+        assert_eq!(stats[&"total_corrected".to_string()], 5, "total_corrected");
+        assert_eq!(stats[&"total_uncorrectable".to_string()], 0, "total_uncorrectable");
     }
 }
